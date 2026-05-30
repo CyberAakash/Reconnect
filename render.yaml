@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: reconnect
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /login
+
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+
+      - key: NODE_ENV
+        value: production
+
+      - key: DATA_DIR
+        value: /var/data
+
+      # Set these in the Render dashboard — never commit real values here.
+      # APP_PASSWORD   : required — protects the web UI (strong password mandatory)
+      # SESSION_SECRET : required — signs the auth cookie (random 32-byte hex string)
+      # ENCRYPTION_KEY : required — keeps stored SSH credentials decryptable across restarts
+      - key: APP_PASSWORD
+        sync: false
+
+      - key: SESSION_SECRET
+        sync: false
+
+      - key: ENCRYPTION_KEY
+        sync: false
+
+    # Persistent disk — keeps data.db across deploys/restarts.
+    # Requires a paid Render plan and pins the service to 1 instance.
+    # Remove the disk block if using the free tier (data resets on restart;
+    # set ENCRYPTION_KEY via env so SSH creds remain decryptable in memory).
+    disk:
+      name: reconnect-data
+      mountPath: /var/data
+      sizeGB: 1
