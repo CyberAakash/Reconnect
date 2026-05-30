@@ -5,17 +5,28 @@ const { Client } = require('ssh2');
 const multer = require('multer');
 const fs = require('fs');
 const { WebSocketServer } = require('ws');
+const cookieParser = require('cookie-parser');
 const db = require('./db');
 
 const app = express();
-const PORT = 3456;
+const PORT = process.env.PORT || 3456;
+const HOST = process.env.HOST || '127.0.0.1';
+const DATA_DIR = process.env.DATA_DIR || __dirname;
 
-// ── Encryption ──
-const SECRET_FILE = path.join(__dirname, '.secret');
-if (!fs.existsSync(SECRET_FILE)) {
-  fs.writeFileSync(SECRET_FILE, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
+// ── Encryption key ──
+// Priority: ENCRYPTION_KEY env var (for stateless/cloud deploys)
+//           → .secret file (for local / persistent-disk deploys)
+let ENCRYPTION_KEY;
+if (process.env.ENCRYPTION_KEY) {
+  ENCRYPTION_KEY = Buffer.from(process.env.ENCRYPTION_KEY.trim().slice(0, 64), 'hex');
+} else {
+  const SECRET_FILE = path.join(DATA_DIR, '.secret');
+  if (!fs.existsSync(SECRET_FILE)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(SECRET_FILE, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
+  }
+  ENCRYPTION_KEY = Buffer.from(fs.readFileSync(SECRET_FILE, 'utf8').trim().slice(0, 64), 'hex');
 }
-const ENCRYPTION_KEY = Buffer.from(fs.readFileSync(SECRET_FILE, 'utf8').trim().slice(0, 64), 'hex');
 const IV_LENGTH = 16;
 
 function encrypt(text) {
@@ -37,9 +48,84 @@ function decrypt(text) {
 }
 
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const upload = multer({ dest: path.join(__dirname, 'uploads') });
+
+// ════════════════════════════════════════
+//  APP-LEVEL AUTH
+// ════════════════════════════════════════
+
+const APP_PASSWORD = process.env.APP_PASSWORD || '';
+const SESSION_SECRET = process.env.SESSION_SECRET ||
+  (process.env.ENCRYPTION_KEY ? process.env.ENCRYPTION_KEY.slice(0, 64) : null);
+const COOKIE_NAME = 'rt_session';
+const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// In production with no APP_PASSWORD set, refuse to start.
+if (process.env.NODE_ENV === 'production' && !APP_PASSWORD) {
+  // eslint-disable-next-line no-console
+  console.error('\x1b[31m[FATAL] APP_PASSWORD must be set in production. Exiting.\x1b[0m');
+  process.exit(1);
+}
+
+const AUTH_ENABLED = Boolean(APP_PASSWORD);
+
+function makeSessionToken() {
+  return crypto.randomBytes(24).toString('hex');
+}
+
+function signToken(token) {
+  const secret = SESSION_SECRET || ENCRYPTION_KEY.toString('hex');
+  return token + '.' + crypto.createHmac('sha256', secret).update(token).digest('hex');
+}
+
+function verifyToken(signed) {
+  if (!signed || typeof signed !== 'string') return false;
+  const dot = signed.lastIndexOf('.');
+  if (dot === -1) return false;
+  const token = signed.slice(0, dot);
+  const expected = signToken(token);
+  return crypto.timingSafeEqual(Buffer.from(signed), Buffer.from(expected));
+}
+
+function requireAuth(req, res, next) {
+  if (!AUTH_ENABLED) return next();
+  const signed = req.cookies[COOKIE_NAME];
+  if (verifyToken(signed)) return next();
+  if (req.accepts('html')) return res.redirect('/login');
+  res.status(401).json({ error: 'Unauthorized' });
+}
+
+// Serve /login page
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.post('/api/login', (req, res) => {
+  const { password } = req.body;
+  if (!AUTH_ENABLED || password === APP_PASSWORD) {
+    const token = makeSessionToken();
+    const signed = signToken(token);
+    res.cookie(COOKIE_NAME, signed, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: COOKIE_MAX_AGE,
+    });
+    return res.json({ ok: true });
+  }
+  res.status(401).json({ error: 'Invalid password' });
+});
+
+app.post('/api/logout', (req, res) => {
+  res.clearCookie(COOKIE_NAME);
+  res.json({ ok: true });
+});
+
+// Protect all /api/* routes (except /api/login and /api/logout already handled above)
+app.use('/api', requireAuth);
 
 // ── SSH config builder ──
 function sshConfig(server, mode) {
@@ -710,9 +796,11 @@ function printBanner(port) {
   console.log(divider);
   console.log(`${c.white}${c.bold}  Developed by${c.reset} ${c.yellow}${c.bold}Aakash${c.reset} ${c.gray}—${c.reset} ${c.green}MTS @ ZohoIM${c.reset}`);
   console.log(divider);
-  console.log(`${c.bold}  ➜  Local:   ${c.reset}${c.cyan}${c.bold}http://127.0.0.1:${port}${c.reset}`);
+  const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
+  console.log(`${c.bold}  ➜  Local:   ${c.reset}${c.cyan}${c.bold}http://${displayHost}:${port}${c.reset}`);
   console.log('');
-  console.log(`${c.gray}  PID ${pid}  │  Node ${nodeVer}  │  ${time}${c.reset}`);
+  const authStatus = AUTH_ENABLED ? `${c.green}auth enabled${c.reset}` : `${c.yellow}auth disabled (dev mode)${c.reset}`;
+  console.log(`${c.gray}  PID ${pid}  │  Node ${nodeVer}  │  ${time}${c.reset}  │  ${authStatus}`);
   console.log(`${c.magenta}  ~ "${tagline}"${c.reset}`);
   console.log(divider);
   console.log('');
@@ -723,7 +811,7 @@ function printBanner(port) {
 //  START
 // ════════════════════════════════════════
 
-const httpServer = app.listen(PORT, '127.0.0.1', () => {
+const httpServer = app.listen(PORT, HOST, () => {
   printBanner(PORT);
 });
 
@@ -734,6 +822,18 @@ const httpServer = app.listen(PORT, '127.0.0.1', () => {
 const wss = new WebSocketServer({ server: httpServer });
 
 wss.on('connection', async (ws, req) => {
+  // Auth gate for WebSocket connections
+  if (AUTH_ENABLED) {
+    const rawCookies = req.headers.cookie || '';
+    const cookieMap = Object.fromEntries(
+      rawCookies.split(';').map(c => c.trim().split('=').map(decodeURIComponent))
+    );
+    if (!verifyToken(cookieMap[COOKIE_NAME])) {
+      ws.close(1008, 'Unauthorized');
+      return;
+    }
+  }
+
   const match = req.url.match(/^\/api\/servers\/(\d+)\/shell/);
   if (!match) { ws.close(1008, 'Invalid path'); return; }
   const id = +match[1];

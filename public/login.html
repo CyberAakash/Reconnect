@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reconnect — Login</title>
+  <style>
+    @font-face { font-family: 'ZohoPuvi'; font-style: normal; font-weight: 400; font-display: swap; src: url('fonts/Zoho_Puvi_Regular.ttf') format('truetype'); }
+    @font-face { font-family: 'ZohoPuvi'; font-style: normal; font-weight: 600; font-display: swap; src: url('fonts/Zoho_Puvi_Semibold.ttf') format('truetype'); }
+    @font-face { font-family: 'ZohoPuvi'; font-style: normal; font-weight: 700; font-display: swap; src: url('fonts/Zoho_Puvi_Bold.ttf') format('truetype'); }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --accent:    #2C66DD;
+      --accent-h:  #3f78ec;
+      --bg:        #16142e;
+      --panel:     #1b1938;
+      --panel-2:   #221f44;
+      --input:     #131129;
+      --border:    rgb(255 255 255 / .07);
+      --border-2:  rgb(255 255 255 / .12);
+      --fg:        #e9eaf4;
+      --fg-muted:  #9a9cb6;
+      --danger:    #f15b4f;
+      --shadow:    0 0 24px 0 rgb(144 128 255 / .10), 0 4px 14px 0 rgb(0 0 0 / .4);
+      --radius:    8px;
+      --font:      'ZohoPuvi', 'Inter', system-ui, sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100dvh;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 40px 36px 36px;
+      width: 100%;
+      max-width: 360px;
+    }
+
+    .brand {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    .brand-title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: .5px;
+      color: var(--fg);
+    }
+
+    .brand-sub {
+      font-size: 12px;
+      color: var(--fg-muted);
+      margin-top: 4px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--fg-muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 6px;
+    }
+
+    input[type="password"] {
+      width: 100%;
+      background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--fg);
+      font-family: var(--font);
+      font-size: 14px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color 150ms ease;
+    }
+
+    input[type="password"]:focus {
+      border-color: var(--accent);
+    }
+
+    .error {
+      display: none;
+      color: var(--danger);
+      font-size: 12.5px;
+      margin-top: 8px;
+    }
+
+    .error.visible { display: block; }
+
+    button {
+      display: block;
+      width: 100%;
+      margin-top: 20px;
+      background: var(--accent);
+      color: #fff;
+      font-family: var(--font);
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: var(--radius);
+      padding: 11px;
+      cursor: pointer;
+      transition: background 150ms ease;
+    }
+
+    button:hover  { background: var(--accent-h); }
+    button:active { opacity: .85; }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 28px;
+      font-size: 11px;
+      color: var(--fg-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="brand-title">Reconnect</div>
+      <div class="brand-sub">SSH Remote Server Manager</div>
+    </div>
+
+    <form id="loginForm">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" autofocus placeholder="Enter access password" />
+      <p class="error" id="errMsg">Incorrect password. Try again.</p>
+      <button type="submit" id="submitBtn">Sign in</button>
+    </form>
+
+    <div class="footer">Developed by Aakash &mdash; MTS @ ZohoIM</div>
+  </div>
+
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('submitBtn');
+      const errMsg = document.getElementById('errMsg');
+      const password = document.getElementById('password').value;
+
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+      errMsg.classList.remove('visible');
+
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password }),
+        });
+
+        if (res.ok) {
+          window.location.href = '/';
+        } else {
+          errMsg.classList.add('visible');
+          document.getElementById('password').value = '';
+          document.getElementById('password').focus();
+        }
+      } catch {
+        errMsg.textContent = 'Network error. Try again.';
+        errMsg.classList.add('visible');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sign in';
+      }
+    });
+  </script>
+</body>
+</html>
