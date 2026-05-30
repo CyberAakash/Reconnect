@@ -49,7 +49,6 @@ function decrypt(text) {
 
 app.use(express.json());
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
 
 const upload = multer({ dest: path.join(__dirname, 'uploads') });
 
@@ -90,18 +89,26 @@ function verifyToken(signed) {
   return crypto.timingSafeEqual(Buffer.from(signed), Buffer.from(expected));
 }
 
+// /api/* always gets 401 JSON — never a redirect (fetch can't follow 302 to /login)
 function requireAuth(req, res, next) {
   if (!AUTH_ENABLED) return next();
-  const signed = req.cookies[COOKIE_NAME];
-  if (verifyToken(signed)) return next();
-  if (req.accepts('html')) return res.redirect('/login');
+  if (verifyToken(req.cookies[COOKIE_NAME])) return next();
   res.status(401).json({ error: 'Unauthorized' });
 }
 
-// Serve /login page
+// Serve /login (must come before static so login.html is reachable when unauthenticated)
 app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
+
+// Gate the app entry point — redirect to /login when unauthenticated
+app.get(['/', '/index.html'], (req, res, next) => {
+  if (!AUTH_ENABLED || verifyToken(req.cookies[COOKIE_NAME])) return next();
+  res.redirect('/login');
+});
+
+// Static files (index.html served here for authenticated requests)
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.post('/api/login', (req, res) => {
   const { password } = req.body;
