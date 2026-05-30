@@ -191,9 +191,41 @@ Reconnect/
 
 ---
 
+## Deploy on Render
+
+Reconnect runs on [Render](https://render.com) as a persistent Node web service (not serverless). The included `render.yaml` blueprint wires everything up.
+
+### Steps
+
+1. Push this repo to GitHub (already done).
+2. In the Render dashboard, click **New → Blueprint** and point it at the repo.
+3. Set the following environment variables in the Render dashboard (**do not commit real values**):
+
+| Variable | Required | Description |
+|---|---|---|
+| `APP_PASSWORD` | Yes | Password that protects the web UI. Use a strong random value. |
+| `SESSION_SECRET` | Yes | Signs the auth cookie. Use a random 32-byte hex string. |
+| `ENCRYPTION_KEY` | Yes | AES-256 key that keeps stored SSH credentials decryptable across restarts. Copy the hex value from your local `.secret` file, or generate a new one: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `HOST` | Auto | Set to `0.0.0.0` by `render.yaml` — do not change. |
+| `NODE_ENV` | Auto | Set to `production` by `render.yaml`. |
+| `DATA_DIR` | Auto | Set to `/var/data` by `render.yaml` (persistent disk mount point). |
+
+### Persistent disk caveat
+
+The `render.yaml` blueprint includes a 1 GB persistent disk mounted at `/var/data` — this stores `data.db` (your saved servers). **Persistent disks require a paid Render plan** and pin the service to 1 instance.
+
+On the **free tier** (no disk): remove the `disk:` block from `render.yaml`. The `data.db` will reset on restart, but as long as `ENCRYPTION_KEY` is set via env your SSH credentials remain consistent if you re-add servers.
+
+### Security note
+
+> **This tool executes arbitrary commands on your remote servers.** Never deploy it publicly without setting `APP_PASSWORD`. Use a long, random password. Do not reuse passwords from other services.
+
+---
+
 ## Security Notes
 
-- The server binds to **127.0.0.1 only** — it is not accessible from other machines on your network.
+- When deployed, set `HOST=0.0.0.0` so the process binds to all interfaces (Render handles TLS/reverse-proxy).
+- When running locally, the server binds to **127.0.0.1 only** — it is not accessible from other machines.
 - Server passwords are **encrypted at rest** using AES-256-CBC. The encryption key is stored in `.secret` (auto-generated on first run with restrictive file permissions).
 - No credentials are ever passed in URL query parameters.
 - **Do not commit `.secret` or `data.db` to version control.** Add them to your `.gitignore`:
