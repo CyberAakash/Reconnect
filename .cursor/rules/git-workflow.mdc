@@ -1,0 +1,51 @@
+---
+description: Git branching and merge workflow for this project
+alwaysApply: true
+---
+
+# Git Branching Workflow
+
+## Branch structure
+
+```
+feature/* ─┐
+bugfix/*   ├──> release ──(user confirms working)──> main
+chore/*    ┘
+hotfix/*
+```
+
+## Rules
+
+### main
+- **Never commit or push directly to `main`.**
+- `main` only receives changes via a merge from `release`.
+- A merge from `release` to `main` may only happen **after the user explicitly confirms** that the release is working and stable.
+- Always ask for confirmation before performing this merge.
+
+### release
+- `release` is a synchronized mirror of `main` and acts as the integration/staging branch.
+- All feature/bugfix/chore branches are merged **into `release`**, not into `main`.
+- After a successful merge from `release` to `main`, keep `release` in sync by merging `main` back into it.
+
+### Feature / bugfix / chore branches
+- Create a dedicated branch for every piece of work:
+  - `feature/<short-description>`
+  - `bugfix/<short-description>`
+  - `chore/<short-description>`
+  - `hotfix/<short-description>`
+- Push changes to that branch only.
+- When the work on the branch is complete and verified, merge it into `release`.
+- Delete the branch after a successful merge.
+
+## Merge order (strict)
+
+1. Work branch → `release`
+2. (only after user confirms) `release` → `main`
+3. `main` → `release` (to keep release in sync after step 2)
+
+## What the agent must do
+
+- Before any git push or commit, check the current branch.
+- If on `main`, **stop and warn** — do not push. Switch to an appropriate branch first.
+- Before merging `release` into `main`, **always ask the user** for explicit confirmation.
+- Never force-push to `main` or `release`.
