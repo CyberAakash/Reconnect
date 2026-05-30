@@ -10,7 +10,7 @@ const db = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3456;
-const HOST = process.env.HOST || '127.0.0.1';
+const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 
 // ── Encryption key ──
