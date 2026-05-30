@@ -1,0 +1,44 @@
+/* RemoteTool — resets, body, scrollbars, focus, keyframes */
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--zs-font-family);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--rt-fg);
+  background: var(--rt-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+::selection { background: var(--rt-accent-soft); }
+
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input, textarea, select { font-family: inherit; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--rt-border-2); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--rt-fg-dim-txt); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+:focus-visible {
+  outline: 2px solid rgb(var(--rt-accent-rgb) / .6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* =================== SHARED KEYFRAMES =================== */
+@keyframes rt-pulse   { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes rt-spin    { to { transform: rotate(360deg); } }
+@keyframes rt-fade    { from { opacity: 0; } }
+@keyframes rt-pop     { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+@keyframes rt-shimmer { 0% { opacity: 0.4; } 50% { opacity: 0.9; } 100% { opacity: 0.4; } }
+@keyframes rt-marquee {
+  0%,15%  { transform: translateX(0); }
+  85%,100% { transform: translateX(var(--rt-marquee-shift, 0)); }
+}
+
+/* =================== SHARED UTILITIES =================== */
+.rt-spacer { flex: 1; }
+.rt-spinner { display: inline-block; animation: rt-spin .7s linear infinite; }

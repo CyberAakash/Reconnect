@@ -1,0 +1,119 @@
+/* RemoteTool — terminal view, quick-commands drawer, xterm host */
+
+/* =================== TERMINAL VIEW =================== */
+.rt-term-tab { height: 100%; background: var(--rt-panel); }
+.rt-term { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; overflow: hidden; }
+.rt-term-out { flex: 1; overflow-y: auto; padding: 12px 14px; font-family: var(--rt-mono); font-size: 12.5px; line-height: 1.6; color: var(--rt-fg); }
+.rt-term-hello { padding: 12px 0 6px; font-size: 12px; color: #6c6e8a; font-family: var(--rt-mono); }
+.rt-term-line { display: flex; align-items: baseline; gap: 8px; padding: 1px 0; font-family: var(--rt-mono); font-size: 12.5px; line-height: 1.55; }
+.rt-term-line .rt-term-prompt { color: var(--rt-success); flex-shrink: 0; }
+.rt-term-line .cmd { color: #e9eaf4; }
+.rt-term-line pre { margin: 0; white-space: pre-wrap; word-break: break-all; color: #b8bad6; }
+.rt-term-line pre.err { color: var(--rt-danger); }
+.rt-term-exit { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 4px; font-size: 11px; }
+.rt-term-exit.ok   { color: var(--rt-success); background: var(--rt-success-soft); }
+.rt-term-exit.fail { color: var(--rt-danger);  background: var(--rt-danger-soft); }
+
+/* Legacy selectors for term output (kept for compatibility) */
+.rt-term-ps { color: var(--rt-success); }
+.rt-term-pp { color: var(--rt-syntax-fn); }
+.rt-term-pd { color: var(--rt-fg-muted); }
+.rt-term-pc { color: var(--rt-fg); }
+.rt-term-res { margin: 3px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--rt-fg-muted); font-family: var(--rt-mono); font-size: 12.5px; }
+.rt-term-res.err { color: var(--rt-danger); }
+
+.rt-term-quick { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-top: 1px solid var(--rt-border); flex-shrink: 0; background: var(--rt-panel); }
+.rt-term-quick-label { font-size: 11px; color: var(--rt-fg-muted); font-weight: 600; align-self: center; margin-right: 2px; }
+.rt-term-input { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--rt-border); flex-shrink: 0; font-family: var(--rt-mono); font-size: 13px; }
+.rt-term-input input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--rt-fg); font-family: var(--rt-mono); font-size: 13px; }
+.rt-term-disabled { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; color: var(--rt-fg-muted); height: 100%; padding: 24px; }
+.rt-term-disabled .t { font-size: 15px; color: var(--rt-fg); margin-bottom: 6px; }
+.rt-term-disabled .s { font-size: 13px; margin-bottom: 16px; }
+.rt-term-disabled .rt-btn { margin: 0 auto; }
+
+/* =================== XTERM HOST =================== */
+#term-xterm {
+  flex: 1; min-height: 0; width: 100%; overflow: hidden; padding: 4px;
+}
+#term-xterm .wterm { border-radius: 0; box-shadow: none; }
+
+/* Custom wterm themes (wterm uses --term-* CSS variables) */
+.wterm.theme-dracula {
+  --term-bg:       #282a36;
+  --term-fg:       #f8f8f2;
+  --term-cursor:   #f8f8f2;
+  --term-color-0:  #21222c;
+  --term-color-1:  #ff5555;
+  --term-color-2:  #50fa7b;
+  --term-color-3:  #f1fa8c;
+  --term-color-4:  #bd93f9;
+  --term-color-5:  #ff79c6;
+  --term-color-6:  #8be9fd;
+  --term-color-7:  #f8f8f2;
+  --term-color-8:  #6272a4;
+  --term-color-9:  #ff6e6e;
+  --term-color-10: #69ff94;
+  --term-color-11: #ffffa5;
+  --term-color-12: #d6acff;
+  --term-color-13: #ff92df;
+  --term-color-14: #a4ffff;
+  --term-color-15: #ffffff;
+}
+
+.wterm.theme-github {
+  --term-bg:       #ffffff;
+  --term-fg:       #24292f;
+  --term-cursor:   #24292f;
+  --term-color-0:  #24292f;
+  --term-color-1:  #cf222e;
+  --term-color-2:  #116329;
+  --term-color-3:  #4d2d00;
+  --term-color-4:  #0969da;
+  --term-color-5:  #8250df;
+  --term-color-6:  #1b7c83;
+  --term-color-7:  #6e7781;
+  --term-color-8:  #57606a;
+  --term-color-9:  #a40e26;
+  --term-color-10: #1a7f37;
+  --term-color-11: #633c01;
+  --term-color-12: #218bff;
+  --term-color-13: #a475f9;
+  --term-color-14: #3192aa;
+  --term-color-15: #8c959f;
+}
+
+/* =================== QUICK-COMMANDS DRAWER =================== */
+.rt-quick-drawer {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: 340px; max-width: 88vw;
+  background: var(--rt-sidebar);
+  border-left: 1px solid var(--rt-border);
+  display: flex; flex-direction: column;
+  z-index: 10;
+  transform: translateX(100%);
+  transition: transform 0.22s cubic-bezier(.4,0,.2,1), box-shadow 0.22s;
+  box-shadow: none;
+}
+.rt-quick-drawer[hidden] { display: none; }
+.rt-quick-drawer.open {
+  transform: translateX(0);
+  box-shadow: -4px 0 18px rgba(0,0,0,.22);
+}
+.rt-quick-ico { display: flex; align-items: center; color: var(--rt-accent); }
+.rt-quick-chip {
+  display: flex; align-items: center; gap: 0;
+  width: 100%;
+  background: var(--rt-panel-2);
+  border: 1px solid var(--rt-border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12px; color: var(--rt-fg-muted);
+  cursor: pointer;
+  transition: background var(--rt-dur), color var(--rt-dur), border-color var(--rt-dur);
+  text-align: left;
+  position: relative; overflow: visible;
+}
+.rt-quick-chip:hover { background: var(--rt-accent-soft, color-mix(in srgb,var(--rt-accent) 12%,transparent)); color: var(--rt-accent); border-color: var(--rt-accent); }
+.rt-quick-chip-label { display: block; font-size: 12.5px; font-weight: 600; color: var(--rt-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rt-quick-chip-cmd { display: block; font-family: var(--rt-mono); font-size: 10.5px; color: var(--rt-fg-dim-txt); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rt-quick-chip-info { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }

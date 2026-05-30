@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RemoteTool — SSH Server Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://esm.sh/@wterm/dom@0.3.0/css" />
+  <style>
+    html { background: #16142e; }
+    html[data-theme='light'] { background: #f3f4f9; }
+  </style>
+</head>
+<body>
+
+<!-- ===================== APP SHELL ===================== -->
+<div class="rt-app" id="app">
+
+  <!-- Activity Rail -->
+  <nav class="rt-rail" aria-label="Primary navigation" id="rail">
+    <div class="rt-rail-logo" title="RemoteTool" id="rail-logo"><!-- LogoMark injected by JS --></div>
+    <button class="rt-rail-btn active" id="rail-sidebar-btn" aria-label="Toggle server list" aria-pressed="true" title="Toggle server list">
+      <!-- menu icon injected by JS -->
+    </button>
+    <div class="rt-rail-spacer"></div>
+    <button class="rt-rail-btn" id="rail-panel-btn" aria-label="Toggle output panel" aria-pressed="false" title="Output">
+      <!-- terminal icon injected by JS -->
+    </button>
+    <button class="rt-rail-btn" id="rail-theme-btn" aria-label="Switch theme" title="Toggle theme">
+      <!-- sun/moon icon injected by JS -->
+    </button>
+    <button class="rt-rail-btn" id="rail-settings-btn" aria-label="Settings" title="Settings">
+      <!-- settings icon injected by JS -->
+    </button>
+  </nav>
+
+  <!-- Sidebar -->
+  <aside class="rt-sidebar" id="sidebar" aria-label="Servers">
+    <div class="rt-sidebar-head">
+      <div class="rt-sidebar-title-row">
+        <div class="rt-sidebar-title">
+          <h2>Servers</h2>
+          <span class="rt-count" id="server-count">0</span>
+        </div>
+        <div class="rt-sidebar-head-actions">
+          <button class="rt-icon-btn accent" id="add-server-btn" aria-label="Add server" title="Add server"><!-- plus --></button>
+        </div>
+      </div>
+      <div class="rt-search">
+        <span id="search-ico"><!-- search --></span>
+        <input type="search" id="server-search" placeholder="Search servers…" aria-label="Search servers" autocomplete="off" />
+      </div>
+    </div>
+    <div class="rt-server-list" id="server-list" role="list" aria-label="Server list">
+      <!-- populated by JS -->
+    </div>
+  </aside>
+
+  <!-- Main Column -->
+  <div class="rt-main-col" id="main-col">
+
+    <!-- Mobile Bar -->
+    <header class="rt-mobilebar" id="mobilebar" aria-label="Top navigation">
+      <button class="rt-icon-btn" id="mb-nav-btn" aria-label="Open server list"><!-- menu --></button>
+      <div class="rt-mobilebar-brand">
+        <span class="rt-mobilebar-logo" id="mb-logo"><!-- LogoMark --></span>
+        <span>RemoteTool</span>
+      </div>
+      <div class="rt-spacer"></div>
+      <button class="rt-icon-btn" id="mb-panel-btn" aria-label="Toggle output panel" aria-pressed="false"><!-- terminal --></button>
+      <button class="rt-icon-btn" id="mb-theme-btn" aria-label="Switch theme"><!-- sun/moon --></button>
+      <button class="rt-icon-btn" id="mb-settings-btn" aria-label="Settings"><!-- settings --></button>
+    </header>
+
+    <main class="rt-main" id="main-area">
+
+      <!-- Welcome (shown when no server selected) -->
+      <div class="rt-welcome" id="welcome-view">
+        <div class="rt-welcome-inner">
+          <div class="rt-welcome-ico" id="welcome-ico"><!-- server icon --></div>
+          <h1>Welcome to RemoteTool</h1>
+          <p>Manage your SSH servers, run commands, and edit remote files — all from one local workspace. Select a server from the list or add a new one to get started.</p>
+          <div class="rt-welcome-actions">
+            <button class="rt-btn primary" id="welcome-add-btn"><!-- plus --> Add Server</button>
+          </div>
+          <div class="rt-welcome-hint">
+            <span>Running locally at</span>
+            <span class="rt-kbd">127.0.0.1:3456</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Server view (shown when a server is selected) -->
+      <div id="server-view" style="display:none; flex-direction:column; height:100%; min-height:0;">
+
+        <!-- Combined tab + status bar -->
+        <div class="rt-tabbar" id="tabbar">
+          <div class="rt-ctabs" role="tablist" aria-label="Sections">
+            <button class="rt-ctab active" id="tab-overview" role="tab" aria-selected="true"><!-- server --> <span class="rt-btn-txt">Overview</span></button>
+            <button class="rt-ctab" id="tab-terminal" role="tab" aria-selected="false"><!-- terminal --> <span class="rt-btn-txt">Terminal</span></button>
+            <button class="rt-ctab" id="tab-files" role="tab" aria-selected="false"><!-- folder --> <span class="rt-btn-txt">Files</span></button>
+          </div>
+          <div class="rt-spacer"></div>
+          <span class="rt-status-pill disconnected" id="status-pill" role="status" aria-live="polite">
+            <span class="rt-status-dot disconnected" id="status-dot"></span>
+            <span id="status-text">Disconnected</span>
+          </span>
+          <button class="rt-btn primary sm" id="connect-btn"><!-- connect --> Connect</button>
+          <button class="rt-btn sm" id="disconnect-btn" style="display:none"><!-- disconnect --> Disconnect</button>
+        </div>
+
+        <!-- Main body: tab content + resize handle + output panel -->
+        <div class="rt-main-body" id="main-body">
+
+          <!-- Tab content -->
+          <div class="rt-content" id="tab-content">
+
+            <!-- Overview tab -->
+            <div id="view-overview" style="display:none">
+              <div class="rt-bento-wrap">
+                <!-- Toolbar -->
+                <div class="rt-bento-toolbar">
+                  <span class="rt-bento-toolbar-title" id="bento-server-name">—</span>
+                  <div class="rt-spacer"></div>
+                  <button class="rt-btn primary sm" id="ov-connect-btn"><!-- connect --> <span class="rt-btn-txt">Connect</span></button>
+                  <button class="rt-btn sm" id="ov-disconnect-btn" style="display:none"><!-- disconnect --> <span class="rt-btn-txt">Disconnect</span></button>
+                  <button class="rt-btn sm" id="sysinfo-refresh-btn"><!-- refresh --> <span class="rt-btn-txt">Refresh</span></button>
+                  <button class="rt-btn sm" id="details-edit-btn"><!-- pencil --> <span class="rt-btn-txt">Edit</span></button>
+                  <button class="rt-btn sm danger" id="details-delete-btn"><!-- trash --> <span class="rt-btn-txt">Delete</span></button>
+                </div>
+                <!-- Bento grid -->
+                <div class="rt-bento" id="bento-grid">
+                  <!-- tiles injected by JS -->
+                </div>
+              </div>
+            </div>
+
+            <!-- Terminal tab -->
+            <div id="view-terminal" style="display:none; height:100%">
+              <!-- disconnected state -->
+              <div class="rt-term rt-term-tab" id="term-disconnected" style="display:none">
+                <div class="rt-term-disabled">
+                  <span id="term-dis-ico"><!-- disconnect --></span>
+                  <div>
+                    <div class="t">Not connected</div>
+                    <div class="s" id="term-dis-msg">Open an SSH session to run commands.</div>
+                    <button class="rt-btn primary" id="term-connect-btn"><!-- connect --> Connect</button>
+                  </div>
+                </div>
+              </div>
+              <!-- connected REPL (real xterm) -->
+              <div class="rt-term rt-term-tab" id="term-repl" style="display:none">
+                <div class="rt-term-quick" id="term-quick">
+                  <span class="rt-spacer"></span>
+                  <button class="rt-icon-btn" id="toggle-quick-btn" aria-label="Quick commands" title="Quick commands"><!-- lightning --></button>
+                  <button class="rt-icon-btn" id="term-refresh-btn" title="Refresh terminal" aria-label="Refresh terminal"><!-- refresh --></button>
+                </div>
+                <div id="term-xterm"></div>
+                <!-- Quick commands right drawer -->
+                <aside class="rt-quick-drawer" id="quick-drawer" aria-label="Quick commands" hidden>
+                  <div class="rt-saved-head">
+                    <span class="rt-quick-ico"><!-- lightning --></span>
+                    <span class="rt-saved-title">Quick Commands</span>
+                    <span class="rt-saved-count" id="quick-count"></span>
+                    <div class="rt-spacer"></div>
+                    <button class="rt-icon-btn" id="qc-add-btn" aria-label="Add quick command" title="Add"><!-- plus --></button>
+                    <button class="rt-icon-btn" id="quick-close-btn" aria-label="Close" title="Close"><!-- close --></button>
+                  </div>
+                  <div class="rt-saved-chips" id="quick-chips"><!-- chips injected by JS --></div>
+                </aside>
+              </div>
+            </div>
+
+            <!-- Files tab -->
+            <div id="view-files" style="display:none; height:100%" class="rt-files-tab">
+              <div class="rt-files" id="files-container">
+                <!-- tree pane -->
+                <div class="rt-tree-pane" id="tree-pane">
+                  <div class="rt-tree-head">
+                    <span class="t">Explorer</span>
+                    <div class="rt-tree-head-actions">
+                      <button class="rt-icon-btn" id="new-file-btn" aria-label="New file" title="New file"><!-- newFile --></button>
+                      <button class="rt-icon-btn" id="upload-btn" aria-label="Upload file" title="Upload file"><!-- upload --></button>
+                      <button class="rt-icon-btn" id="refresh-tree-btn" aria-label="Refresh" title="Refresh"><!-- refresh --></button>
+                      <button class="rt-icon-btn" id="toggle-bookmarks-btn" aria-label="Saved files" title="Saved files"><!-- bookmark --></button>
+                    </div>
+                  </div>
+                  <div class="rt-tree-path">
+                    <nav class="rt-breadcrumbs" id="tree-breadcrumbs" aria-label="Current path"></nav>
+                    <button class="rt-icon-btn rt-crumb-edit" id="path-edit-btn" title="Edit path" aria-label="Edit path"><!-- pencil --></button>
+                    <form class="rt-path-edit" id="tree-path-form" style="display:none">
+                      <input class="rt-tree-path-input" id="tree-path-input" value="/home/sas/source_compile/" spellcheck="false" autocomplete="off" aria-label="Current directory path" title="Type a path and press Enter to navigate" />
+                      <button type="button" class="rt-icon-btn" id="path-cancel-btn" title="Back to breadcrumbs" aria-label="Back to breadcrumbs"><!-- chevronLeft --></button>
+                    </form>
+                  </div>
+                  <div class="rt-tree" id="file-tree" role="list" aria-label="File tree">
+                    <!-- entries injected by JS -->
+                  </div>
+                </div>
+                <!-- editor pane -->
+                <div class="rt-editor-pane" id="editor-pane">
+                  <div class="rt-editor-tabs" id="editor-tabs" role="tablist"></div>
+                  <div class="rt-editor-toolbar" id="editor-toolbar" style="display:none">
+                    <span class="fname" id="editor-fname"></span>
+                    <span class="rt-status-pill disconnected" id="editor-lang" style="font-size:10.5px"></span>
+                    <div class="rt-spacer"></div>
+                    <button class="rt-icon-btn" id="bookmark-file-btn" title="Bookmark this file"><!-- bookmark --></button>
+                    <button class="rt-btn sm" id="compile-btn"><!-- compile --> <span class="rt-btn-txt">Compile</span></button>
+                    <button class="rt-btn primary sm" id="save-btn" disabled><!-- save --> <span class="rt-btn-txt">Save</span></button>
+                    <button class="rt-btn danger sm" id="delete-file-btn" title="Delete this file"><!-- trash --> <span class="rt-btn-txt">Delete</span></button>
+                  </div>
+                  <div class="rt-code-scroll" id="code-scroll" style="display:none">
+                    <div class="rt-monaco" id="monaco-host"></div>
+                  </div>
+
+                  <div class="rt-editor-empty" id="editor-empty">
+                    <span id="editor-empty-ico"><!-- file --></span>
+                    <p>No file open. Select a file from the explorer to view and edit it.</p>
+                  </div>
+                  <input type="file" id="file-upload-input" hidden aria-hidden="true" tabindex="-1" />
+                </div>
+                <!-- Saved files right drawer -->
+                <aside class="rt-saved-drawer" id="saved-drawer" aria-label="Saved files" hidden>
+                  <div class="rt-saved-head">
+                    <span class="rt-saved-ico"><!-- bookmark --></span>
+                    <span class="rt-saved-title">Saved Files</span>
+                    <span class="rt-saved-count" id="saved-count"></span>
+                    <div class="rt-spacer"></div>
+                    <button class="rt-icon-btn" id="saved-close-btn" aria-label="Close saved files" title="Close"><!-- close --></button>
+                  </div>
+                  <div class="rt-saved-chips" id="saved-chips"><!-- chips injected by JS --></div>
+                </aside>
+              </div>
+            </div>
+
+          </div><!-- /rt-content -->
+
+          <!-- Resize handle (shown when panel open) -->
+          <div class="rt-resize-handle" id="resize-handle" style="display:none" role="separator" aria-orientation="horizontal" aria-label="Resize output panel"></div>
+
+          <!-- Output Panel -->
+          <aside class="rt-side-panel" id="output-panel" aria-label="Output" style="display:none">
+            <div class="rt-side-wrap">
+              <div class="rt-side-bar">
+                <span class="rt-out-bar-ico" id="out-bar-ico"><!-- terminal --></span>
+                <span class="rt-out-title">Output</span>
+                <span class="rt-out-source" id="out-source"></span>
+                <div class="rt-spacer"></div>
+                <button class="rt-icon-btn rt-out-btn" id="out-clear-btn" aria-label="Clear output" title="Clear"><!-- clear --></button>
+                <button class="rt-icon-btn rt-out-btn" id="out-close-btn" aria-label="Close output panel" title="Close"><!-- close --></button>
+              </div>
+              <div class="rt-side-body rt-out-body" id="out-body" role="log" aria-live="polite" aria-label="Output log">
+                <div class="rt-out-empty" id="out-empty">
+                  <span id="out-empty-ico"><!-- terminal --></span>
+                  <p>No activity yet.</p>
+                  <span>Connection events and command output for this server appear here.</span>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+        </div><!-- /rt-main-body -->
+      </div><!-- /server-view -->
+
+    </main>
+
+  </div><!-- /rt-main-col -->
+
+</div><!-- /rt-app -->
+
+<!-- Mobile backdrop -->
+<div class="rt-backdrop" id="backdrop" style="display:none" aria-hidden="true"></div>
+
+<!-- ===================== MODALS ===================== -->
+
+<!-- Server add/edit modal -->
+<div class="rt-overlay" id="server-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="sm-title">
+  <div class="rt-modal" id="server-modal-box">
+    <div class="rt-modal-head">
+      <h2 id="sm-title"><span id="sm-title-ico"><!-- server --></span><span id="sm-title-text">Add Server</span></h2>
+      <button class="rt-icon-btn" id="sm-close" aria-label="Close dialog"><!-- close --></button>
+    </div>
+    <div class="rt-modal-body">
+      <div class="rt-field">
+        <label class="rt-label" for="sm-label">Label <span class="req">*</span></label>
+        <input id="sm-label" class="rt-input-el" placeholder="prod-web-01" autocomplete="off" />
+        <span class="rt-hint" id="sm-label-err" style="color:var(--rt-danger);display:none"></span>
+      </div>
+      <div class="rt-field row">
+        <div class="rt-field" style="flex:3">
+          <label class="rt-label" for="sm-host">Host <span class="req">*</span></label>
+          <input id="sm-host" class="rt-input-el mono" placeholder="203.0.113.10" autocomplete="off" />
+          <span class="rt-hint" id="sm-host-err" style="color:var(--rt-danger);display:none"></span>
+        </div>
+        <div class="rt-field" style="flex:1">
+          <label class="rt-label" for="sm-port">Port</label>
+          <input id="sm-port" class="rt-input-el mono" type="number" value="22" min="1" max="65535" />
+          <span class="rt-hint" id="sm-port-err" style="color:var(--rt-danger);display:none"></span>
+        </div>
+      </div>
+      <div class="rt-field">
+        <label class="rt-label" for="sm-user">Username <span class="req">*</span></label>
+        <input id="sm-user" class="rt-input-el mono" placeholder="root" autocomplete="off" />
+        <span class="rt-hint" id="sm-user-err" style="color:var(--rt-danger);display:none"></span>
+      </div>
+      <div class="rt-field">
+        <span class="rt-label">Authentication</span>
+        <div class="rt-seg" role="group" aria-label="Authentication method">
+          <button type="button" id="sm-auth-key" class="active" aria-pressed="true">SSH Key</button>
+          <button type="button" id="sm-auth-pass" aria-pressed="false">Password</button>
+        </div>
+      </div>
+      <div class="rt-field" id="sm-key-field">
+        <label class="rt-label" for="sm-key">Private key path</label>
+        <input id="sm-key" class="rt-input-el mono" placeholder="~/.ssh/id_ed25519" autocomplete="off" />
+        <span class="rt-hint">Path to the private key on this machine.</span>
+      </div>
+      <div class="rt-field" id="sm-pass-field" style="display:none">
+        <label class="rt-label" for="sm-pass">Password</label>
+        <input id="sm-pass" class="rt-input-el" type="password" placeholder="••••••••••" />
+        <span class="rt-hint">Stored encrypted locally.</span>
+      </div>
+    </div>
+    <div class="rt-modal-foot">
+      <button class="rt-btn ghost" id="sm-cancel">Cancel</button>
+      <button class="rt-btn primary" id="sm-save"><!-- plus --> Add Server</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div class="rt-overlay" id="settings-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="sett-title">
+  <div class="rt-modal" id="settings-modal-box">
+    <div class="rt-modal-head">
+      <h2 id="sett-title"><span id="sett-ico"><!-- settings --></span> Settings</h2>
+      <button class="rt-icon-btn" id="sett-close" aria-label="Close dialog"><!-- close --></button>
+    </div>
+    <div class="rt-modal-body">
+      <div class="rt-field">
+        <span class="rt-label">Connection flow</span>
+        <span class="rt-hint" style="margin-bottom:4px">Applies globally to every server you connect to.</span>
+        <div class="rt-seg" role="group" aria-label="Connection flow">
+          <button type="button" id="sett-otp" aria-pressed="false">OTP (2-factor)</button>
+          <button type="button" id="sett-legacy" class="active" aria-pressed="true">Legacy</button>
+        </div>
+        <div class="rt-settings-explain" id="sett-explain">
+          <span id="sett-explain-ico"><!-- connect --></span>
+          <span id="sett-explain-txt">Connecting authenticates with the stored key or password only — no second factor.</span>
+        </div>
+      </div>
+    </div>
+    <div class="rt-modal-foot">
+      <button class="rt-btn primary" id="sett-done">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- OTP modal -->
+<div class="rt-overlay" id="otp-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="otp-title">
+  <div class="rt-modal rt-otp" id="otp-modal-box">
+    <div class="rt-confirm-body">
+      <div class="rt-confirm-ico"><span id="otp-ico"><!-- connect --></span></div>
+      <div>
+        <h2 id="otp-title">Authentication required</h2>
+        <p id="otp-prompt-text">Enter the one-time passcode.</p>
+      </div>
+    </div>
+    <div class="rt-otp-field">
+      <input type="text" id="otp-input" autocomplete="one-time-code" spellcheck="false" placeholder="Enter passcode…" aria-label="One-time passcode" />
+    </div>
+    <div class="rt-modal-foot">
+      <button class="rt-btn ghost" id="otp-cancel">Cancel</button>
+      <button class="rt-btn primary" id="otp-verify"><!-- check --> Verify &amp; Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- Quick command modal -->
+<div class="rt-overlay" id="qc-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="qc-modal-title">
+  <div class="rt-modal" id="qc-modal-box">
+    <div class="rt-modal-head">
+      <h2 id="qc-modal-title">Quick Command</h2>
+      <button class="rt-icon-btn" id="qc-modal-close" aria-label="Close"><!-- close --></button>
+    </div>
+    <div class="rt-modal-body">
+      <div class="rt-field">
+        <label class="rt-label" for="qc-label">Label</label>
+        <input class="rt-input" id="qc-label" type="text" placeholder="e.g. Restart server" autocomplete="off" />
+      </div>
+      <div class="rt-field">
+        <label class="rt-label" for="qc-command">Command</label>
+        <input class="rt-input" id="qc-command" type="text" placeholder="e.g. sudo systemctl restart app" autocomplete="off" />
+      </div>
+    </div>
+    <div class="rt-modal-foot">
+      <button class="rt-btn ghost" id="qc-cancel">Cancel</button>
+      <button class="rt-btn primary" id="qc-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm dialog -->
+<div class="rt-overlay" id="confirm-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="rt-modal rt-confirm" id="confirm-box">
+    <div class="rt-confirm-body">
+      <div class="rt-confirm-ico" id="confirm-ico"><!-- check/trash --></div>
+      <div>
+        <h2 id="confirm-title"></h2>
+        <p id="confirm-msg"></p>
+      </div>
+    </div>
+    <div class="rt-modal-foot">
+      <button class="rt-btn ghost" id="confirm-cancel">Cancel</button>
+      <button class="rt-btn primary" id="confirm-ok"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="rt-toast" id="toast" style="display:none" role="status">
+  <span class="ico" id="toast-ico"></span>
+  <span id="toast-text"></span>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

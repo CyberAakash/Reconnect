@@ -1,0 +1,99 @@
+/* RemoteTool — design tokens: fonts, :root variables, dark + light themes */
+
+/* =================== FONTS =================== */
+@font-face { font-family: 'ZohoPuvi'; font-style: normal; font-weight: 300; font-display: swap; src: url('../fonts/Zoho_Puvi_Light.ttf') format('truetype'); }
+@font-face { font-family: 'ZohoPuvi'; font-style: normal; font-weight: 400; font-display: swap; src: url('../fonts/Zoho_Puvi_Regular.ttf') format('truetype'); }
+@font-face { font-family: 'ZohoPuvi'; font-style: normal; font-weight: 500; font-display: swap; src: url('../fonts/Zoho_Puvi_Medium.ttf') format('truetype'); }
+@font-face { font-family: 'ZohoPuvi'; font-style: normal; font-weight: 600; font-display: swap; src: url('../fonts/Zoho_Puvi_Semibold.ttf') format('truetype'); }
+@font-face { font-family: 'ZohoPuvi'; font-style: normal; font-weight: 700; font-display: swap; src: url('../fonts/Zoho_Puvi_Bold.ttf') format('truetype'); }
+
+/* =================== GLOBAL TOKENS =================== */
+:root {
+  --zs-font-family: 'ZohoPuvi', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --rt-accent:        #2C66DD;
+  --rt-accent-rgb:    44 102 221;
+  --rt-radius:        8px;
+  --rt-radius-sm:     6px;
+  --rt-radius-lg:     12px;
+  --rt-rail-w:        56px;
+  --rt-sidebar-w:     272px;
+  --rt-dur:           150ms;
+  --rt-ease:          cubic-bezier(.4,0,.2,1);
+  --rt-mono:          'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* =================== DARK THEME (primary) =================== */
+[data-theme='dark'] {
+  --rt-rail:        #0d0c1c;
+  --rt-sidebar:     #131228;
+  --rt-bg:          #16142e;
+  --rt-panel:       #1b1938;
+  --rt-panel-2:     #221f44;
+  --rt-panel-3:     #2a2752;
+  --rt-input:       #131129;
+  --rt-term-bg:     #0f0e22;
+  --rt-border:      rgb(255 255 255 / .07);
+  --rt-border-2:    rgb(255 255 255 / .12);
+  --rt-fg:          #e9eaf4;
+  --rt-fg-muted:    #9a9cb6;
+  --rt-fg-dim:      #65668222;
+  --rt-fg-dim-txt:  #6c6e8a;
+  --rt-accent-hover:#3f78ec;
+  --rt-accent-soft: rgb(var(--rt-accent-rgb) / .16);
+  --rt-accent-line: rgb(var(--rt-accent-rgb) / .45);
+  --rt-success:     #34d399;
+  --rt-success-soft:rgb(52 211 153 / .15);
+  --rt-danger:      #f15b4f;
+  --rt-danger-soft: rgb(241 91 79 / .15);
+  --rt-warn:        #f0b429;
+  --rt-warn-soft:   rgb(240 180 41 / .15);
+  --rt-shadow:      0 0 24px 0 rgb(144 128 255 / .10), 0 4px 14px 0 rgb(0 0 0 / .4);
+  --rt-shadow-sm:   0 0 8px 0 rgb(144 128 255 / .10), 0 2px 6px 0 rgb(0 0 0 / .3);
+  --rt-shadow-pop:  0 18px 50px -12px rgb(0 0 0 / .7), 0 0 0 1px rgb(255 255 255 / .06);
+  --rt-overlay:     rgb(7 6 18 / .68);
+  --rt-rail-fg:     #b7b9d4;
+  --rt-rail-fg-dim: #6a6c8e;
+  --rt-syntax-key:  #c792ea;
+  --rt-syntax-str:  #7ee0a8;
+  --rt-syntax-num:  #f4b06a;
+  --rt-syntax-com:  #5f6184;
+  --rt-syntax-fn:   #69a7ff;
+}
+
+/* =================== LIGHT THEME =================== */
+[data-theme='light'] {
+  --rt-rail:        #14122a;
+  --rt-sidebar:     #ffffff;
+  --rt-bg:          #e9ebf3;
+  --rt-panel:       #ffffff;
+  --rt-panel-2:     #f1f3fb;
+  --rt-panel-3:     #e9edf9;
+  --rt-input:       #ffffff;
+  --rt-term-bg:     #181734;
+  --rt-border:      #d4d9e8;
+  --rt-border-2:    #c2c8db;
+  --rt-fg:          #232636;
+  --rt-fg-muted:    #4b586b;
+  --rt-fg-dim:      #00000010;
+  --rt-fg-dim-txt:  #717e92;
+  --rt-accent-hover:#1e56cb;
+  --rt-accent-soft: rgb(var(--rt-accent-rgb) / .08);
+  --rt-accent-line: rgb(var(--rt-accent-rgb) / .30);
+  --rt-success:     #15803d;
+  --rt-success-soft:rgb(21 128 61 / .10);
+  --rt-danger:      #dc2626;
+  --rt-danger-soft: rgb(220 38 38 / .08);
+  --rt-warn:        #b45309;
+  --rt-warn-soft:   rgb(180 83 9 / .10);
+  --rt-shadow:      0 0 24px 0 rgb(144 128 255 / .26);
+  --rt-shadow-sm:   0 0 8px 0 rgb(144 128 255 / .26);
+  --rt-shadow-pop:  0 24px 60px -14px rgb(54 51 87 / .34), 0 0 0 1px rgb(54 51 87 / .06);
+  --rt-overlay:     rgb(24 21 42 / .42);
+  --rt-rail-fg:     #b7b9d4;
+  --rt-rail-fg-dim: #6a6c8e;
+  --rt-syntax-key:  #9333ea;
+  --rt-syntax-str:  #15803d;
+  --rt-syntax-num:  #b45309;
+  --rt-syntax-com:  #94a3b8;
+  --rt-syntax-fn:   #2563eb;
+}

@@ -1,0 +1,83 @@
+/* RemoteTool — overview/dashboard view, bento grid, ring meters, skeletons */
+
+/* =================== OVERVIEW TOOLBAR =================== */
+.rt-dash { max-width: 1040px; margin: 0 auto; padding: 24px 28px 56px; display: flex; flex-direction: column; gap: 18px; }
+.rt-dash-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 2px; }
+.rt-dash-title { display: flex; align-items: center; gap: 15px; min-width: 0; }
+.rt-dash-ico {
+  width: 52px; height: 52px; flex-shrink: 0; display: grid; place-items: center;
+  border-radius: 13px; background: var(--rt-accent-soft); color: var(--rt-accent); border: 1px solid var(--rt-accent-line);
+}
+.rt-dash-title h1 { font-size: 25px; font-weight: 600; margin: 0 0 3px; letter-spacing: -.01em; white-space: nowrap; }
+.rt-dash-title .sub { font-family: var(--rt-mono); font-size: 13px; color: var(--rt-fg-muted); }
+.rt-dash-cta { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+
+/* =================== BENTO OVERVIEW =================== */
+.rt-bento-wrap { width: 100%; margin: 0; padding: 20px 24px 56px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box; }
+
+.rt-bento-toolbar { display: flex; align-items: center; gap: 8px; padding-bottom: 2px; }
+.rt-bento-toolbar-title {
+  font-size: 17px; font-weight: 700; letter-spacing: -.02em;
+  color: var(--rt-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.rt-bento {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+/* =================== BASE TILE =================== */
+.rt-bt {
+  background: var(--rt-panel-2); border: 1px solid var(--rt-border);
+  border-radius: calc(var(--rt-radius) + 2px); padding: 14px 15px;
+  display: flex; align-items: center; gap: 12px; min-width: 0;
+  transition: border-color var(--rt-dur), box-shadow var(--rt-dur);
+  position: relative; overflow: hidden;
+}
+.rt-bt:hover { border-color: var(--rt-border-2); box-shadow: 0 2px 8px rgb(0 0 0/.06); }
+[data-theme='light'] .rt-bt { background: var(--rt-panel); box-shadow: 0 1px 3px rgb(36 33 64 / .10), 0 1px 2px rgb(36 33 64 / .06); }
+[data-theme='light'] .rt-bt:hover { box-shadow: 0 4px 12px rgb(36 33 64 / .14); }
+
+/* Span variants */
+.rt-bt--w2 { grid-column: span 2; }
+.rt-bt--w4 { grid-column: 1 / -1; }
+
+/* Icon chip */
+.rt-bt-chip {
+  flex-shrink: 0; width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--rt-accent-soft); border-radius: 9px;
+  color: var(--rt-accent);
+}
+.rt-bt-chip--connected    { background: var(--rt-success-soft); color: var(--rt-success); }
+.rt-bt-chip--disconnected { background: var(--rt-danger-soft);  color: var(--rt-danger); }
+.rt-bt-chip--connecting   { background: color-mix(in srgb, var(--rt-warn) 18%, transparent); color: var(--rt-warn); }
+
+/* Text body */
+.rt-bt-body { min-width: 0; flex: 1; }
+.rt-bt-lbl { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--rt-fg-dim-txt); margin-bottom: 4px; }
+.rt-bt-val { display: block; font-size: 13px; color: var(--rt-fg); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rt-bt-val.mono { font-family: var(--rt-mono); font-size: 11.5px; }
+.rt-bt-sub { display: block; font-size: 11px; color: var(--rt-fg-dim-txt); margin-top: 3px; }
+
+/* Ring meter tile */
+.rt-bt--ring { gap: 16px; }
+.rt-bt-ring-wrap { flex-shrink: 0; }
+.rt-ring { display: block; }
+.rt-ring-sk { width: 60px; height: 60px; border-radius: 50%; background: var(--rt-border); animation: rt-shimmer 1.2s infinite linear; }
+
+/* Empty / info tile */
+.rt-bt--empty {
+  flex-direction: column; justify-content: center; align-items: center;
+  gap: 10px; padding: 36px 24px; color: var(--rt-fg-dim-txt); text-align: center;
+  background: var(--rt-panel); border-style: dashed;
+}
+.rt-bt--empty p { margin: 0; font-size: 13px; }
+
+/* Skeleton tile */
+.rt-bt--sk { pointer-events: none; }
+.rt-bt-chip--sk { background: var(--rt-border); animation: rt-shimmer 1.2s infinite linear; }
+.sk-line { border-radius: 4px; background: var(--rt-border); animation: rt-shimmer 1.2s infinite linear; }
+.sk-lbl { width: 60px; height: 9px;  margin-bottom: 6px; }
+.sk-val { width: 100%; height: 13px; }

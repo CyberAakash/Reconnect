@@ -1,0 +1,62 @@
+/* RemoteTool — responsive breakpoints and reduced-motion */
+
+/* =================== ≤1024px =================== */
+@media (max-width: 1024px) {
+  .rt-app { grid-template-columns: 1fr !important; }
+  .rt-rail { display: none; }
+  .rt-mobilebar { display: flex; }
+  .rt-sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 300px; max-width: 84vw; z-index: 70;
+    transform: translateX(-100%); transition: transform var(--rt-dur) var(--rt-ease); box-shadow: var(--rt-shadow-pop);
+  }
+  .rt-sidebar.drawer-open, .rt-sidebar.mobile-open { transform: none; }
+  .rt-side-panel {
+    width: 100% !important; border-top: 1px solid var(--rt-border);
+  }
+  .rt-resize-handle { height: 8px; background: var(--rt-border-2); }
+  .rt-dash { padding: 18px 16px 48px; }
+  .rt-bento-wrap { padding: 14px 12px 48px; }
+  .rt-bento { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+}
+
+/* =================== ≤620px =================== */
+@media (max-width: 620px) {
+  #connect-btn, #disconnect-btn, #status-pill { display: none !important; }
+  .rt-tabbar { padding: 6px 10px; }
+  .rt-tabbar .rt-spacer { display: none; }
+  .rt-ctabs { flex: 1; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .rt-ctabs::-webkit-scrollbar { display: none; }
+  .rt-ctab { flex: 0 0 auto; white-space: nowrap; }
+  .rt-tabbar .rt-btn { padding: 0 9px; }
+  .rt-bento { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .rt-bento .rt-bt--w2 { grid-column: span 2; }
+
+  .rt-btn-txt { display: none; }
+  .rt-ctab { padding: 0 10px; gap: 0; }
+  .rt-ctab.active::after { left: 8px; right: 8px; }
+  .rt-btn.sm:has(.rt-btn-txt) { padding: 0 8px; min-width: 28px; }
+
+  #status-text { display: none; }
+  .rt-status-pill,
+  .rt-status-pill.connected,
+  .rt-status-pill.disconnected,
+  .rt-status-pill.connecting { background: none; border: none; padding: 2px; gap: 0; }
+  .rt-status-pill .rt-status-dot { width: 10px; height: 10px; }
+  .rt-status-pill.connected    .rt-status-dot { background: var(--rt-success); box-shadow: 0 0 0 3px var(--rt-success-soft); }
+  .rt-status-pill.disconnected .rt-status-dot { background: var(--rt-danger); box-shadow: none; }
+  .rt-status-pill.connecting   .rt-status-dot { background: var(--rt-warn); }
+
+  .rt-editor-toolbar { padding: 6px 10px; gap: 4px; }
+  #editor-lang { display: none; }
+  .rt-editor-toolbar .fname { max-width: 100px; }
+
+  .rt-bt { flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; }
+  .rt-bt-chip { width: 30px; height: 30px; }
+  .rt-bt-lbl { white-space: normal; }
+  .rt-bt--ring { flex-direction: row; align-items: center; gap: 12px; }
+}
+
+/* =================== PREFERS-REDUCED-MOTION =================== */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
