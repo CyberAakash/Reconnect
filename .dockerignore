@@ -1,0 +1,8 @@
+node_modules
+.git
+.gitignore
+data.db*
+.secret
+uploads
+*.md
+.cursor
