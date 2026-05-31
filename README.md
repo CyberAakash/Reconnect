@@ -191,7 +191,79 @@ Reconnect/
 
 ---
 
+## Internal / Self-Hosted Deployment
+
+> **Network requirement — read this first.**
+> Reconnect is an SSH client. It can only reach servers that its host machine can route to.
+> Internal app servers (e.g. `*.zohocorpin.com`, `*.csez.zohocorpin.com`) are not reachable from the public internet.
+> **Public cloud platforms (Render, Vercel, Railway, Fly.io, etc.) will time out with `Timed out while waiting for handshake`.**
+> The host must be on the corporate network (office LAN or VPN).
+
+### Option A — Docker (recommended)
+
+1. Build the image on a machine that has Docker and can reach the repo:
+   ```bash
+   git clone https://github.com/CyberAakash/Reconnect.git
+   cd Reconnect
+   docker build -t reconnect .
+   ```
+
+2. Run it (substitute real values for the three secrets):
+   ```bash
+   docker run -d --name reconnect \
+     -p 3456:3456 \
+     -e APP_PASSWORD='a-strong-password' \
+     -e SESSION_SECRET='<32-byte hex>' \
+     -e ENCRYPTION_KEY='<32-byte hex from your .secret file>' \
+     -v reconnect-data:/data \
+     reconnect
+   ```
+
+3. Access at `http://<internal-host>:3456`.
+
+To generate the hex values:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+**ENCRYPTION_KEY** must match the value in your local `.secret` file (or generate a new one if starting fresh).
+
+### Option B — Direct Node.js (VM / internal server)
+
+```bash
+git clone https://github.com/CyberAakash/Reconnect.git
+cd Reconnect
+npm install --omit=dev
+NODE_ENV=production HOST=0.0.0.0 PORT=3456 DATA_DIR=/var/reconnect \
+  APP_PASSWORD='...' SESSION_SECRET='...' ENCRYPTION_KEY='...' \
+  node server.js
+```
+
+For always-on operation, wrap with **pm2** or a **systemd** unit.
+
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `APP_PASSWORD` | Yes | Password for the `/login` page. Use a strong value. |
+| `SESSION_SECRET` | Yes | Signs the auth cookie. Random 32-byte hex string. |
+| `ENCRYPTION_KEY` | Yes | AES-256 key for stored SSH credentials. Copy from `.secret` or generate new. |
+| `HOST` | Defaults to `0.0.0.0` | Bind address. `0.0.0.0` listens on all interfaces. |
+| `PORT` | Defaults to `3456` | HTTP port. |
+| `DATA_DIR` | Defaults to app directory | Directory for `data.db` and `.secret`. Use a persistent volume path. |
+| `NODE_ENV` | Set to `production` | Enables prod guards (secure cookies, APP_PASSWORD enforcement). |
+
+### Persistent data
+
+`data.db` (saved servers) and `.secret` (encryption key fallback) are written to `DATA_DIR`. Mount a persistent volume/directory at that path so they survive container restarts and re-deploys.
+
+---
+
 ## Deploy on Render
+
+> **Note:** `render.yaml` is kept for reference but Render (public cloud) cannot reach internal corporate SSH servers. Use the Internal deployment path above instead if your servers are internal-only.
+
+
 
 Reconnect runs on [Render](https://render.com) as a persistent Node web service (not serverless). The included `render.yaml` blueprint wires everything up.
 
