@@ -25,6 +25,7 @@ import { loadQuickCommands, toggleQuickDrawer, addQuickCommand, closeQcModal, sa
 // Modals
 import { openServerModalById, closeServerModal, setServerAuthType, saveServerById, deleteServer, _setServerModalDeps } from './modals/serverModal.js';
 import { openSettings, closeSettings, updateSettingsUI, saveSettings } from './modals/settingsModal.js';
+import { openHelp, closeHelp } from './modals/helpModal.js';
 import { openOtpModal, closeOtpModal, _setOtpDeps } from './modals/otpModal.js';
 
 /* ===== Dependency injection (breaks circular imports) ===== */
@@ -213,10 +214,12 @@ function initUI() {
   document.getElementById('rail-sidebar-btn').innerHTML = icon('menu', 16);
   document.getElementById('rail-panel-btn').innerHTML = icon('terminal', 16);
   document.getElementById('rail-settings-btn').innerHTML = icon('settings', 16);
+  document.getElementById('rail-help-btn').innerHTML = icon('info', 16);
   document.getElementById('mb-logo').innerHTML = icon('logo', 20);
   document.getElementById('mb-nav-btn').innerHTML = icon('menu', 16);
   document.getElementById('mb-panel-btn').innerHTML = icon('terminal', 16);
   document.getElementById('mb-settings-btn').innerHTML = icon('settings', 16);
+  document.getElementById('mb-help-btn').innerHTML = icon('info', 16);
   document.getElementById('welcome-ico').innerHTML = icon('server', 48);
   document.getElementById('welcome-add-btn').innerHTML = `${icon('plus', 14)} Add Server`;
   document.getElementById('editor-empty-ico').innerHTML = icon('file', 32);
@@ -255,6 +258,8 @@ function initUI() {
   document.getElementById('mb-theme-btn').addEventListener('click', toggleTheme);
   document.getElementById('rail-settings-btn').addEventListener('click', openSettings);
   document.getElementById('mb-settings-btn').addEventListener('click', openSettings);
+  document.getElementById('rail-help-btn').addEventListener('click', openHelp);
+  document.getElementById('mb-help-btn').addEventListener('click', openHelp);
 
   // Mobile nav
   document.getElementById('mb-nav-btn').addEventListener('click', () => {
@@ -397,6 +402,7 @@ function initUI() {
   // Settings modal
   document.getElementById('sett-close').innerHTML = icon('close', 14);
   document.getElementById('sett-close').addEventListener('click', closeSettings);
+  document.getElementById('help-close').addEventListener('click', closeHelp);
   document.getElementById('sett-done').addEventListener('click', saveSettings);
   document.getElementById('sett-otp').addEventListener('click', () => { STATE.authMode = 'otp'; updateSettingsUI(); });
   document.getElementById('sett-legacy').addEventListener('click', () => { STATE.authMode = 'legacy'; updateSettingsUI(); });
@@ -420,7 +426,7 @@ function initUI() {
   document.getElementById('qc-command').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveQuickCommand(); } });
 
   // Close modals on overlay click
-  ['server-modal', 'settings-modal', 'confirm-modal', 'qc-modal'].forEach(modalId => {
+  ['server-modal', 'settings-modal', 'confirm-modal', 'qc-modal', 'help-modal'].forEach(modalId => {
     const overlay = document.getElementById(modalId);
     if (overlay) overlay.addEventListener('click', e => {
       if (e.target === overlay) {
@@ -434,7 +440,7 @@ function initUI() {
   // Escape key closes modals
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
-      ['server-modal', 'settings-modal', 'confirm-modal', 'otp-modal', 'qc-modal'].forEach(modalId => {
+      ['server-modal', 'settings-modal', 'confirm-modal', 'otp-modal', 'qc-modal', 'help-modal'].forEach(modalId => {
         const overlay = document.getElementById(modalId);
         if (overlay && overlay.style.display !== 'none') {
           const box = overlay.querySelector('.rt-modal');

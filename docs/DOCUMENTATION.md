@@ -66,14 +66,36 @@ echo "APP_PASSWORD=your-secret" > .env
 
 # Start the server
 npm start
-# → Listening on http://127.0.0.1:3456
+# → Listening on http://127.0.0.1:9898
 ```
 
 ### First Run
 
-Open `http://127.0.0.1:3456` in your browser.
+Open `http://127.0.0.1:9898` in your browser.
 
 > **Development tip**: If `APP_PASSWORD` is **not** set in your `.env` (or environment), the application **skips the login screen entirely** and loads the main UI directly. This makes local development frictionless — just `npm start` and go. Set `APP_PASSWORD` before exposing the app to any network.
+
+### Running with PM2 (Auto-Start)
+
+PM2 keeps Reconnect running in the background and restarts it automatically after crashes or reboots.
+
+#### Common PM2 commands
+
+| Command | What it does |
+|---|---|
+| `pm2 status` | See if Reconnect is running |
+| `pm2 logs reconnect` | Tail live logs |
+| `pm2 restart reconnect` | Restart the server |
+| `pm2 stop reconnect` | Stop the server |
+| `pm2 start npm --name reconnect -- start` | Start it again if stopped |
+
+> **First-time setup** (if PM2 is not yet configured):
+> ```bash
+> npm install -g pm2
+> pm2 start npm --name reconnect -- start
+> pm2 save
+> pm2 startup   # run the printed sudo command to enable auto-start on login
+> ```
 
 ---
 
@@ -340,4 +362,94 @@ All mobile screenshots in this document were captured at 390 × 844 px with a Mo
 
 ---
 
-*Documentation generated from a live Reconnect instance at `http://127.0.0.1:3456/` connected to the Imapi SSH server. A throwaway file `/tmp/reconnect-demo.txt` was created and deleted during documentation generation to demonstrate file CRUD and bookmarking; no production data was touched.*
+*Documentation generated from a live Reconnect instance at `http://127.0.0.1:9898/` connected to the Imapi SSH server. A throwaway file `/tmp/reconnect-demo.txt` was created and deleted during documentation generation to demonstrate file CRUD and bookmarking; no production data was touched.*
+
+---
+
+## Optional: Custom Local Domain + Memorable Port
+
+> **This section is optional.** The default setup (`http://127.0.0.1:9898`) works perfectly without it.
+
+If you'd like to access Reconnect via a friendly URL like `http://reconnect.zoho.tool:9898`, follow the steps below.
+
+### How it works
+
+```
+Browser: reconnect.zoho.tool:9898  --(hosts file)-->  127.0.0.1:9898  --> Node app
+```
+
+The OS hosts file resolves the custom name to loopback; no code changes are needed beyond what's already done.
+
+### Step 1: Add a hosts file entry
+
+**macOS** — run in Terminal:
+```bash
+echo "127.0.0.1 reconnect.zoho.tool" | sudo tee -a /etc/hosts
+```
+
+**Windows** — open Notepad as Administrator and add this line to `C:\Windows\System32\drivers\etc\hosts`:
+```
+127.0.0.1 reconnect.zoho.tool
+```
+
+### Step 2: Verify it works
+
+```bash
+ping -c 1 reconnect.zoho.tool
+# Should show: 127.0.0.1
+```
+
+### Step 3: Access the tool
+
+Open your browser and go to:
+```
+http://reconnect.zoho.tool:9898
+```
+
+> **Tip:** Bookmark this URL. Because `.tool` is not a standard public TLD, some browsers may treat a bare `reconnect.zoho.tool` as a search query — always use the full `http://` prefix.
+
+### To undo (remove the custom domain)
+
+```bash
+sudo nano /etc/hosts
+# Find and delete the line: 127.0.0.1 reconnect.zoho.tool
+# Save with Ctrl+O, exit with Ctrl+X
+```
+
+### Step 4 (advanced): Access without a port number
+
+If you want `http://reconnect.zoho.tool` with no `:9898`, pick one approach:
+
+#### Option A — macOS pfctl port forwarding (recommended)
+
+Keeps the app on port 9898. The OS silently redirects port 80 traffic to it.
+
+```bash
+sudo pfctl -e 2>/dev/null; echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 9898" | sudo pfctl -ef -
+```
+
+**Understanding the output** — you may see messages like these. All are **warnings, not errors**:
+
+| Message | What it means |
+|---|---|
+| `pfctl: Use of -f option, could result in flushing of rules…` | Normal advisory — pf loaded your rule. Safe to ignore. |
+| `No ALTQ support in kernel / ALTQ related functions disabled` | macOS doesn't include bandwidth shaping. No effect on port forwarding. |
+| `pfctl: pf already enabled` | Packet filter was already running — fine. The `-e` flag is harmless. |
+
+If the command exits **without an error** (just warnings), the rule is active. Test by visiting `http://reconnect.zoho.tool` in your browser.
+
+> This rule lasts until the next reboot. The app itself keeps running on 9898 — no PM2 changes needed.
+
+#### Option B — Run on port 80
+
+```bash
+pm2 delete reconnect
+sudo PORT=80 pm2 start npm --name reconnect -- start
+pm2 save
+```
+
+> **macOS caveat:** port 80 requires root. Prefer Option A.
+
+#### Option C — Just use a bookmark (simplest)
+
+Add `http://reconnect.zoho.tool:9898` as a bookmark named "Reconnect" — one click, never type the port again.

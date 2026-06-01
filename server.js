@@ -9,7 +9,7 @@ const cookieParser = require('cookie-parser');
 const db = require('./db');
 
 const app = express();
-const PORT = process.env.PORT || 3456;
+const PORT = process.env.PORT || 9898;
 const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 
@@ -109,6 +109,12 @@ app.get(['/', '/index.html'], (req, res, next) => {
 
 // Static files (index.html served here for authenticated requests)
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Gate + serve documentation assets (docs/index.html, the PDF deck, screenshots)
+app.use('/docs', (req, res, next) => {
+  if (!AUTH_ENABLED || verifyToken(req.cookies[COOKIE_NAME])) return next();
+  res.redirect('/login');
+}, express.static(path.join(__dirname, 'docs')));
 
 app.post('/api/login', (req, res) => {
   const { password } = req.body;
@@ -807,6 +813,15 @@ function printBanner(port) {
   console.log('');
   const authStatus = AUTH_ENABLED ? `${c.green}auth enabled${c.reset}` : `${c.yellow}auth disabled (dev mode)${c.reset}`;
   console.log(`${c.gray}  PID ${pid}  │  Node ${nodeVer}  │  ${time}${c.reset}  │  ${authStatus}`);
+  const mode = process.env.NODE_ENV === 'production' ? `${c.green}production${c.reset}` : `${c.yellow}development${c.reset}`;
+  const hotReload = process.env.npm_lifecycle_event === 'dev' ? `${c.cyan} (nodemon)${c.reset}` : '';
+  console.log(`${c.gray}  Mode: ${mode}${hotReload}  │  Help: ${c.cyan}http://${displayHost}:${port}/docs${c.reset}`);
+  const isPM2 = process.env.pm_id !== undefined;
+  if (isPM2) {
+    console.log(`${c.gray}  PM2 managed  │  pm2 logs reconnect  │  pm2 restart reconnect${c.reset}`);
+  } else {
+    console.log(`${c.gray}  Tip: run under PM2 for auto-start → pm2 start npm --name reconnect -- start${c.reset}`);
+  }
   console.log(`${c.magenta}  ~ "${tagline}"${c.reset}`);
   console.log(divider);
   console.log('');

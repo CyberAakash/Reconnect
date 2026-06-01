@@ -25,6 +25,7 @@ A lightweight, self-hosted web app to manage remote servers over SSH — all fro
 - Bookmarked files for fast access to frequently edited remote files
 - Server overview with live system stats and connection status pill
 - Dark / light theme with self-hosted fonts
+- Built-in Help Guide with downloadable PDF documentation
 - Zero build tooling — native ES modules and CSS `@import`, runs directly in the browser
 - Binds to `127.0.0.1` only — not accessible from the network
 
@@ -85,13 +86,60 @@ Both commands should print a version number.
    npm start
    ```
 
+   **For development (auto-restart on file changes):**
+
+   ```bash
+   npm run dev
+   ```
+
+   > `npm run dev` uses nodemon and watches `server.js` and `db.js`. Any save to those files restarts the server automatically. Auth is disabled in dev mode.
+
+   After starting, you will see the Reconnect ASCII banner followed by:
+
+   ```
+   ────────────────────────────────────────────────────────────────────────────────
+   ────────────────────────────────────────────────────────────────────────────────
+     ➜  Local:   http://localhost:9898
+
+     PID 12345  │  Node v20.x.x  │  14:30:00  │  auth disabled (dev mode)
+     Mode: development (nodemon)  │  Help: http://localhost:9898/docs
+     ~ "May your sockets never close."
+   ────────────────────────────────────────────────────────────────────────────────
+   ```
+
+   Open the URL shown in the `➜  Local:` line. The Help Guide is accessible at `/docs`.
+
 4. **Open your browser** and go to:
 
    ```
-   http://127.0.0.1:3456
+   http://127.0.0.1:9898
    ```
 
 That's it. The tool is ready to use.
+
+---
+
+## Auto-Start with PM2
+
+PM2 keeps Reconnect running in the background and restarts it automatically after crashes or reboots. It was set up during initial configuration — the commands below are for day-to-day use.
+
+### Common PM2 commands
+
+| Command | What it does |
+|---|---|
+| `pm2 status` | See if Reconnect is running |
+| `pm2 logs reconnect` | Tail live logs |
+| `pm2 restart reconnect` | Restart the server |
+| `pm2 stop reconnect` | Stop the server |
+| `pm2 start npm --name reconnect -- start` | Start it again if stopped |
+
+> **First-time setup** (if PM2 is not yet configured):
+> ```bash
+> npm install -g pm2
+> pm2 start npm --name reconnect -- start
+> pm2 save
+> pm2 startup   # run the printed sudo command to enable auto-start on login
+> ```
 
 ---
 
@@ -175,9 +223,15 @@ Reconnect/
 │   │   └── modals/
 │   │       ├── serverModal.js     # Add/edit/delete server modal
 │   │       ├── settingsModal.js   # App settings (auth mode) modal
-│   │       └── otpModal.js        # One-time passcode modal
+│   │       ├── otpModal.js        # One-time passcode modal
+│   │       └── helpModal.js       # In-app help guide modal
 │   ├── fonts/             # Self-hosted Zoho Puvi font files
 │   └── vendor/            # Vendored xterm.js assets
+├── docs/
+│   ├── index.html             # In-app Help Guide (rendered in iframe)
+│   ├── fonts/                 # ZohoPuvi font files for docs
+│   ├── DOCUMENTATION.md       # Source documentation content
+│   └── Reconnect — Deck.pdf   # Downloadable PDF documentation
 ├── uploads/               # Temporary directory for file uploads
 ├── data.db                # SQLite database (created on first run)
 └── .secret                # Auto-generated AES-256 encryption key (created on first run)
@@ -211,7 +265,7 @@ Reconnect/
 2. Run it (substitute real values for the three secrets):
    ```bash
    docker run -d --name reconnect \
-     -p 3456:3456 \
+     -p 9898:9898 \
      -e APP_PASSWORD='a-strong-password' \
      -e SESSION_SECRET='<32-byte hex>' \
      -e ENCRYPTION_KEY='<32-byte hex from your .secret file>' \
@@ -219,7 +273,7 @@ Reconnect/
      reconnect
    ```
 
-3. Access at `http://<internal-host>:3456`.
+3. Access at `http://<internal-host>:9898`.
 
 To generate the hex values:
 ```bash
@@ -234,7 +288,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 git clone https://github.com/CyberAakash/Reconnect.git
 cd Reconnect
 npm install --omit=dev
-NODE_ENV=production HOST=0.0.0.0 PORT=3456 DATA_DIR=/var/reconnect \
+NODE_ENV=production HOST=0.0.0.0 PORT=9898 DATA_DIR=/var/reconnect \
   APP_PASSWORD='...' SESSION_SECRET='...' ENCRYPTION_KEY='...' \
   node server.js
 ```
@@ -249,7 +303,7 @@ For always-on operation, wrap with **pm2** or a **systemd** unit.
 | `SESSION_SECRET` | Yes | Signs the auth cookie. Random 32-byte hex string. |
 | `ENCRYPTION_KEY` | Yes | AES-256 key for stored SSH credentials. Copy from `.secret` or generate new. |
 | `HOST` | Defaults to `0.0.0.0` | Bind address. `0.0.0.0` listens on all interfaces. |
-| `PORT` | Defaults to `3456` | HTTP port. |
+| `PORT` | Defaults to `9898` | HTTP port. |
 | `DATA_DIR` | Defaults to app directory | Directory for `data.db` and `.secret`. Use a persistent volume path. |
 | `NODE_ENV` | Set to `production` | Enables prod guards (secure cookies, APP_PASSWORD enforcement). |
 
@@ -315,7 +369,7 @@ On the **free tier** (no disk): remove the `disk:` block from `render.yaml`. The
 | Problem | Solution |
 |---|---|
 | `npm install` fails on `better-sqlite3` | Make sure you have Xcode Command Line Tools: `xcode-select --install` |
-| Port 3456 already in use | Kill the existing process: `lsof -ti:3456 \| xargs kill` then restart |
+| Port 9898 already in use | Kill the existing process: `lsof -ti:9898 \| xargs kill` then restart |
 | SSH connection fails | Verify the server IP, port, username, and credentials. Use **Test Connection** from the UI. |
 | Permission denied on SSH key | Ensure the key file has correct permissions: `chmod 600 ~/.ssh/id_rsa` |
 
@@ -323,10 +377,17 @@ On the **free tier** (no disk): remove the `disk:` block from `render.yaml`. The
 
 ## Stopping the Server
 
-Press `Ctrl + C` in the terminal where `npm start` is running, or:
+**If running via PM2:**
+```bash
+pm2 stop reconnect
+```
+
+**If running directly (`npm start`):**
+
+Press `Ctrl + C` in the terminal, or:
 
 ```bash
-lsof -ti:3456 | xargs kill
+lsof -ti:9898 | xargs kill
 ```
 
 ---
@@ -334,3 +395,94 @@ lsof -ti:3456 | xargs kill
 ## License
 
 ISC
+
+---
+
+## Optional: Custom Local Domain + Memorable Port
+
+> **This section is optional.** The default setup (`http://127.0.0.1:9898`) works perfectly without it.
+
+If you'd like to access Reconnect via a friendly URL like `http://reconnect.zoho.tool:9898`, follow the steps below.
+
+### How it works
+
+```
+Browser: reconnect.zoho.tool:9898  --(hosts file)-->  127.0.0.1:9898  --> Node app
+```
+
+The OS hosts file resolves the custom name to loopback; no code changes are needed beyond what's already done.
+
+### Step 1: Add a hosts file entry
+
+**macOS** — run in Terminal:
+```bash
+echo "127.0.0.1 reconnect.zoho.tool" | sudo tee -a /etc/hosts
+```
+
+**Windows** — open Notepad as Administrator and add this line to `C:\Windows\System32\drivers\etc\hosts`:
+```
+127.0.0.1 reconnect.zoho.tool
+```
+
+### Step 2: Verify it works
+
+```bash
+ping -c 1 reconnect.zoho.tool
+# Should show: 127.0.0.1
+```
+
+### Step 3: Access the tool
+
+Open your browser and go to:
+```
+http://reconnect.zoho.tool:9898
+```
+
+> **Tip:** Bookmark this URL. Because `.tool` is not a standard public TLD, some browsers may treat a bare `reconnect.zoho.tool` as a search query — always use the full `http://` prefix.
+
+### To undo (remove the custom domain)
+
+```bash
+sudo nano /etc/hosts
+# Find and delete the line: 127.0.0.1 reconnect.zoho.tool
+# Save with Ctrl+O, exit with Ctrl+X
+```
+
+### Step 4 (advanced): Access without a port number
+
+If you want `http://reconnect.zoho.tool` with no `:9898`, pick one approach:
+
+#### Option A — macOS pfctl port forwarding (recommended)
+
+Keeps the app on port 9898. The OS silently redirects port 80 traffic to it.
+
+```bash
+# One-time: enable pf and add the forwarding rule
+sudo pfctl -e 2>/dev/null; echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 9898" | sudo pfctl -ef -
+```
+
+**Understanding the output** — you may see messages like these. All are **warnings, not errors**:
+
+| Message | What it means |
+|---|---|
+| `pfctl: Use of -f option, could result in flushing of rules…` | Normal advisory — pf loaded your rule. Safe to ignore. |
+| `No ALTQ support in kernel / ALTQ related functions disabled` | macOS doesn't include bandwidth shaping. No effect on port forwarding. |
+| `pfctl: pf already enabled` | Packet filter was already running — fine. The `-e` flag is harmless. |
+
+If the command exits **without an error** (just the warnings above), the rule is active. Test by visiting `http://reconnect.zoho.tool` — no port needed.
+
+> **Note:** This rule lasts until the next reboot. To make it survive reboots, add it to `/etc/pf.conf` (see macOS pf documentation). The app itself continues to run on port 9898 — no PM2 changes needed.
+
+#### Option B — Run on port 80
+
+```bash
+pm2 delete reconnect
+sudo PORT=80 pm2 start npm --name reconnect -- start
+pm2 save
+```
+
+> **macOS caveat:** port 80 requires root. Running PM2 as root is generally not recommended. Prefer Option A.
+
+#### Option C — Just use a bookmark (simplest)
+
+The app runs on `:9898` as-is. Add `http://reconnect.zoho.tool:9898` as a browser bookmark named "Reconnect" — one click, never type the port again.

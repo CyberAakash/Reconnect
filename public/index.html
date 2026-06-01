@@ -35,6 +35,9 @@
     <button class="rt-rail-btn" id="rail-settings-btn" aria-label="Settings" title="Settings">
       <!-- settings icon injected by JS -->
     </button>
+    <button class="rt-rail-btn" id="rail-help-btn" aria-label="Help" title="Help">
+      <!-- info icon injected by JS -->
+    </button>
   </nav>
 
   <!-- Sidebar -->
@@ -73,6 +76,7 @@
       <button class="rt-icon-btn" id="mb-panel-btn" aria-label="Toggle output panel" aria-pressed="false"><!-- terminal --></button>
       <button class="rt-icon-btn" id="mb-theme-btn" aria-label="Switch theme"><!-- sun/moon --></button>
       <button class="rt-icon-btn" id="mb-settings-btn" aria-label="Settings"><!-- settings --></button>
+      <button class="rt-icon-btn" id="mb-help-btn" aria-label="Help"><!-- info --></button>
     </header>
 
     <main class="rt-main" id="main-area">
@@ -354,6 +358,24 @@
     </div>
     <div class="rt-modal-foot">
       <button class="rt-btn primary" id="sett-done">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Help modal -->
+<div class="rt-overlay" id="help-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="help-title">
+  <div class="rt-modal rt-modal-lg" id="help-modal-box">
+              <div class="rt-modal-head">
+                <h2 id="help-title"><span id="help-ico"></span> Help &amp; Guide</h2>
+                <div class="rt-help-head-actions">
+                  <a class="rt-btn sm ghost" id="help-pdf-link" href="/docs/Reconnect%20%E2%80%94%20Deck.pdf" target="_blank" rel="noopener">
+                    <span id="help-dl-ico"></span> Download PDF
+                  </a>
+                  <button class="rt-icon-btn" id="help-close" aria-label="Close dialog"></button>
+                </div>
+              </div>
+    <div class="rt-modal-body rt-help-body">
+      <iframe id="help-frame" title="Reconnect documentation" loading="lazy"></iframe>
     </div>
   </div>
 </div>
