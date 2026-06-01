@@ -1,4 +1,4 @@
-/* RemoteTool — terminal view, quick-commands drawer, xterm host */
+/* Reconnect — terminal view, quick-commands drawer, xterm host */
 
 /* =================== TERMINAL VIEW =================== */
 .rt-term-tab { height: 100%; background: var(--rt-panel); }
