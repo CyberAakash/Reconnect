@@ -801,7 +801,6 @@ function printBanner(port) {
   art.forEach(line => console.log(line));
   console.log('');
   console.log(divider);
-  console.log(`${c.white}${c.bold}  Developed by${c.reset} ${c.yellow}${c.bold}Aakash${c.reset} ${c.gray}—${c.reset} ${c.green}MTS @ ZohoIM${c.reset}`);
   console.log(divider);
   const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
   console.log(`${c.bold}  ➜  Local:   ${c.reset}${c.cyan}${c.bold}http://${displayHost}:${port}${c.reset}`);

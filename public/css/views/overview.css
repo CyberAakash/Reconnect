@@ -1,4 +1,4 @@
-/* RemoteTool — overview/dashboard view, bento grid, ring meters, skeletons */
+/* Reconnect — overview/dashboard view, bento grid, ring meters, skeletons */
 
 /* =================== OVERVIEW TOOLBAR =================== */
 .rt-dash { max-width: 1040px; margin: 0 auto; padding: 24px 28px 56px; display: flex; flex-direction: column; gap: 18px; }

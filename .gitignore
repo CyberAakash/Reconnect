@@ -2,3 +2,4 @@ node_modules/
 .secret
 data.db*
 uploads/
+.gstack/

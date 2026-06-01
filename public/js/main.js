@@ -1,4 +1,4 @@
-/* ===== RemoteTool — main entry point ===== */
+/* ===== Reconnect — main entry point ===== */
 
 import { STATE } from './state.js';
 import { icon } from './icons.js';

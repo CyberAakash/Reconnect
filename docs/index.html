@@ -1,0 +1,1438 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reconnect — Browser-Based SSH Manager</title>
+<style>
+  /* ── Reset & Variables ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0d0f14;
+    --bg2:       #141720;
+    --bg3:       #1c2030;
+    --border:    rgba(255,255,255,.08);
+    --text:      #e2e8f0;
+    --muted:     #8892a4;
+    --accent:    #6c63ff;
+    --accent2:   #00c9a7;
+    --accent3:   #ff6b6b;
+    --gold:      #ffd700;
+    --radius:    12px;
+    --shadow:    0 8px 32px rgba(0,0,0,.45);
+    --font:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono:      'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  [data-theme="light"] {
+    --bg:    #f5f7ff;
+    --bg2:   #ffffff;
+    --bg3:   #eef0f8;
+    --border: rgba(0,0,0,.09);
+    --text:  #1a1f36;
+    --muted: #5a6480;
+    --shadow: 0 8px 32px rgba(80,90,180,.12);
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    transition: background .3s, color .3s;
+    overflow-x: hidden;
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg2); }
+  ::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 3px; }
+
+  /* ── Layout ── */
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    min-height: 100vh;
+  }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .toc-panel { display: none; }
+  }
+
+  /* ── TOC sidebar ── */
+  .toc-panel {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    padding: 2rem 1.25rem 2rem 1.5rem;
+    font-size: .83rem;
+  }
+
+  .toc-logo {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: -.3px;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin-bottom: 1.75rem;
+    text-decoration: none;
+  }
+
+  .toc-logo .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent);
+    flex-shrink: 0;
+  }
+
+  .toc-section { margin-bottom: 1.25rem; }
+  .toc-section-label {
+    font-size: .7rem;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: .5rem;
+    padding-left: .5rem;
+  }
+
+  .toc-link {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .35rem .6rem;
+    border-radius: 7px;
+    color: var(--muted);
+    text-decoration: none;
+    transition: all .18s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .toc-link:hover, .toc-link.active {
+    color: var(--text);
+    background: var(--bg3);
+  }
+
+  .toc-link.active { color: var(--accent); }
+  .toc-link .n {
+    font-size: .72rem;
+    background: var(--bg3);
+    border-radius: 4px;
+    padding: 0 .35rem;
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+
+  /* ── Main content ── */
+  .main { min-width: 0; }
+
+  /* ── Top bar ── */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 1rem;
+    padding: .9rem 2rem;
+    background: rgba(13,15,20,.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  [data-theme="light"] .topbar {
+    background: rgba(245,247,255,.88);
+  }
+
+  .mobile-title {
+    display: none;
+    font-weight: 700;
+    font-size: .95rem;
+    flex: 1;
+  }
+
+  @media (max-width: 900px) { .mobile-title { display: block; } }
+
+  .theme-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: .45rem .9rem;
+    cursor: pointer;
+    font-size: .82rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+    transition: all .18s;
+    font-family: var(--font);
+  }
+
+  .theme-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .badge {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #fff;
+    border-radius: 6px;
+    padding: .25rem .7rem;
+    font-size: .75rem;
+    font-weight: 600;
+  }
+
+  /* ── Content ── */
+  .content {
+    padding: 0 2.5rem 5rem;
+    max-width: 960px;
+  }
+
+  @media (max-width: 700px) { .content { padding: 0 1.25rem 4rem; } }
+
+  /* ── Hero ── */
+  .hero {
+    padding: 5rem 0 3.5rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -60px; left: -100px;
+    width: 600px; height: 400px;
+    background: radial-gradient(ellipse, rgba(108,99,255,.18) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .hero::after {
+    content: '';
+    position: absolute;
+    top: 20px; right: -80px;
+    width: 400px; height: 300px;
+    background: radial-gradient(ellipse, rgba(0,201,167,.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .hero-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    background: rgba(108,99,255,.12);
+    border: 1px solid rgba(108,99,255,.25);
+    color: #a89cff;
+    border-radius: 20px;
+    padding: .3rem .85rem;
+    font-size: .78rem;
+    font-weight: 600;
+    letter-spacing: .04em;
+    margin-bottom: 1.25rem;
+    text-transform: uppercase;
+  }
+
+  h1.hero-title {
+    font-size: clamp(2.2rem, 5vw, 3.4rem);
+    font-weight: 800;
+    letter-spacing: -.04em;
+    line-height: 1.1;
+    margin-bottom: 1rem;
+    background: linear-gradient(135deg, #fff 0%, #a89cff 60%, var(--accent2) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  [data-theme="light"] h1.hero-title {
+    background: linear-gradient(135deg, #1a1f36 0%, var(--accent) 60%, #00897b 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+  }
+
+  .hero-desc {
+    font-size: 1.08rem;
+    color: var(--muted);
+    max-width: 620px;
+    line-height: 1.75;
+  }
+
+  .hero-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .6rem;
+    margin-top: 1.75rem;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: .3rem .8rem;
+    font-size: .8rem;
+    color: var(--muted);
+  }
+
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .pill .dot.green  { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+  .pill .dot.purple { background: var(--accent); }
+  .pill .dot.teal   { background: var(--accent2); }
+
+  /* ── Divider ── */
+  .hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 2.5rem 0;
+  }
+
+  /* ── Section headings ── */
+  h2 {
+    font-size: 1.65rem;
+    font-weight: 700;
+    letter-spacing: -.02em;
+    margin-bottom: 1.1rem;
+    position: relative;
+    padding-left: 1rem;
+  }
+
+  h2::before {
+    content: '';
+    position: absolute;
+    left: 0; top: .15em;
+    width: 4px;
+    height: .8em;
+    background: linear-gradient(to bottom, var(--accent), var(--accent2));
+    border-radius: 2px;
+  }
+
+  h3 {
+    font-size: 1.08rem;
+    font-weight: 600;
+    color: var(--text);
+    margin: 1.5rem 0 .7rem;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+  }
+
+  /* ── Feature grid ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+
+  .feat-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.2rem 1.25rem;
+    position: relative;
+    overflow: hidden;
+    transition: transform .2s, box-shadow .2s, border-color .2s;
+  }
+
+  .feat-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow);
+    border-color: rgba(108,99,255,.3);
+  }
+
+  .feat-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(108,99,255,.05) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .feat-icon {
+    font-size: 1.5rem;
+    margin-bottom: .5rem;
+    display: block;
+  }
+
+  .feat-name {
+    font-weight: 600;
+    font-size: .9rem;
+    color: var(--text);
+    margin-bottom: .3rem;
+  }
+
+  .feat-desc {
+    font-size: .82rem;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+
+  /* ── Arch diagram ── */
+  .arch-box {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.75rem;
+    margin: 1.25rem 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .arch-diagram {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    flex-wrap: wrap;
+    row-gap: 1.2rem;
+  }
+
+  .arch-node {
+    text-align: center;
+    padding: .75rem 1rem;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    min-width: 120px;
+    flex-shrink: 0;
+  }
+
+  .arch-node .label {
+    font-size: .75rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .arch-node .sublabel {
+    font-size: .68rem;
+    color: var(--muted);
+    margin-top: .2rem;
+  }
+
+  .arch-arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 .5rem;
+    flex-shrink: 0;
+  }
+
+  .arch-arrow .proto {
+    font-size: .65rem;
+    color: var(--accent);
+    font-weight: 600;
+    white-space: nowrap;
+    margin-bottom: .2rem;
+  }
+
+  .arch-arrow .line {
+    display: flex;
+    align-items: center;
+    color: var(--muted);
+    font-size: 1rem;
+  }
+
+  /* ── Code blocks ── */
+  pre {
+    background: #0a0c12;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem 1.4rem;
+    overflow-x: auto;
+    margin: 1rem 0;
+    position: relative;
+  }
+
+  [data-theme="light"] pre { background: #1e2030; }
+
+  pre code {
+    font-family: var(--mono);
+    font-size: .83rem;
+    color: #e2e8f0;
+    line-height: 1.65;
+  }
+
+  .pre-label {
+    position: absolute;
+    top: .6rem; right: .8rem;
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .kw  { color: #c792ea; }
+  .cm  { color: #546e7a; font-style: italic; }
+  .st  { color: #c3e88d; }
+  .fn  { color: #82aaff; }
+  .nb  { color: #ffcb6b; }
+
+  /* ── Callout boxes ── */
+  .callout {
+    display: flex;
+    gap: .75rem;
+    padding: 1rem 1.25rem;
+    border-radius: var(--radius);
+    margin: 1rem 0;
+    font-size: .88rem;
+  }
+
+  .callout.info {
+    background: rgba(108,99,255,.1);
+    border: 1px solid rgba(108,99,255,.25);
+    color: #c4bfff;
+  }
+
+  .callout.tip {
+    background: rgba(0,201,167,.08);
+    border: 1px solid rgba(0,201,167,.2);
+    color: #7fffd4;
+  }
+
+  .callout.warn {
+    background: rgba(255,193,7,.08);
+    border: 1px solid rgba(255,193,7,.2);
+    color: #ffe066;
+  }
+
+  .callout .icon { font-size: 1.1rem; flex-shrink: 0; margin-top: .05rem; }
+
+  /* ── Section blocks (walkthrough) ── */
+  .section-block {
+    margin-bottom: 3.5rem;
+    scroll-margin-top: 5rem;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .section-num {
+    width: 36px; height: 36px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: .78rem;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+    box-shadow: 0 4px 14px rgba(108,99,255,.35);
+  }
+
+  .section-title {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text);
+    padding-top: .4rem;
+  }
+
+  /* ── Screenshots table (Desktop | Mobile) ── */
+  .shots-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.25rem 0;
+    table-layout: auto;
+  }
+
+  .shots-table th {
+    padding: .5rem .75rem;
+    text-align: center;
+    font-size: .8rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 2px solid var(--border);
+  }
+
+  .shots-table td {
+    padding: .6rem .5rem;
+    vertical-align: top;
+  }
+
+  .shots-table img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+
+  /* ── Feature bullets ── */
+  .feat-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    margin: .75rem 0;
+    font-size: .9rem;
+    color: var(--muted);
+  }
+
+  .feat-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: .6rem;
+    padding: .45rem .75rem;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    transition: border-color .18s;
+  }
+
+  .feat-list li:hover { border-color: rgba(108,99,255,.3); color: var(--text); }
+
+  .feat-list .bullet {
+    color: var(--accent);
+    font-size: .9rem;
+    flex-shrink: 0;
+    margin-top: .05rem;
+  }
+
+  /* ── Table ── */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 1rem 0;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: .86rem;
+  }
+
+  thead tr {
+    background: var(--bg3);
+  }
+
+  th {
+    padding: .75rem 1rem;
+    text-align: left;
+    font-weight: 600;
+    font-size: .78rem;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+
+  td {
+    padding: .7rem 1rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: top;
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  tbody tr:hover td { background: var(--bg3); }
+
+  td:first-child { font-weight: 500; color: var(--accent2); }
+
+  /* ── Install steps ── */
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+    margin: 1.25rem 0;
+  }
+
+  .step {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+
+  .step-num {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--bg3);
+    border: 2px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: .75rem;
+    font-weight: 700;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .step-body { flex: 1; padding-top: .2rem; }
+  .step-body strong { display: block; margin-bottom: .25rem; font-size: .9rem; }
+  .step-body span { font-size: .85rem; color: var(--muted); }
+
+
+  /* ── Footer ── */
+  .footer {
+    padding: 2.5rem 2.5rem 3rem;
+    border-top: 1px solid var(--border);
+    font-size: .82rem;
+    color: var(--muted);
+    max-width: 960px;
+    line-height: 1.7;
+  }
+
+  /* ── Responsive mobile toc ── */
+  .mobile-toc-btn {
+    display: none;
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 200;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 48px; height: 48px;
+    font-size: 1.2rem;
+    cursor: pointer;
+    box-shadow: 0 6px 20px rgba(108,99,255,.5);
+  }
+
+  @media (max-width: 900px) { .mobile-toc-btn { display: flex; align-items: center; justify-content: center; } }
+
+  /* ── Security table special ── */
+  .sec-table td:first-child {
+    color: #f87171;
+    font-size: .82rem;
+  }
+
+  /* ── Inline code ── */
+  code {
+    font-family: var(--mono);
+    font-size: .84em;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: .1em .4em;
+    color: #a5d6a7;
+  }
+
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+  }
+
+  /* ── Section divider with number ── */
+  .section-divider {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 3rem 0 2rem;
+  }
+
+  .section-divider .lbl {
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+    padding: .3rem .75rem;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+  }
+
+  .section-divider .line { flex: 1; height: 1px; background: var(--border); }
+
+
+  /* ── Glow accents ── */
+  .glow { color: var(--accent); }
+  .glow2 { color: var(--accent2); }
+</style>
+</head>
+<body>
+
+
+<div class="layout">
+
+  <!-- ── TOC ── -->
+  <nav class="toc-panel" aria-label="Table of contents">
+    <a href="#hero" class="toc-logo">
+      <span class="dot"></span>
+      Reconnect Docs
+    </a>
+
+    <div class="toc-section">
+      <div class="toc-section-label">Overview</div>
+      <a href="#features" class="toc-link">Key Features</a>
+      <a href="#architecture" class="toc-link">Architecture</a>
+      <a href="#getting-started" class="toc-link">Getting Started</a>
+    </div>
+
+    <div class="toc-section">
+      <div class="toc-section-label">Walkthrough</div>
+      <a href="#s1" class="toc-link"><span class="n">01</span> Login</a>
+      <a href="#s2" class="toc-link"><span class="n">02</span> App Shell</a>
+      <a href="#s3" class="toc-link"><span class="n">03</span> Servers</a>
+      <a href="#s4" class="toc-link"><span class="n">04</span> Settings</a>
+      <a href="#s5" class="toc-link"><span class="n">05</span> Overview</a>
+      <a href="#s6" class="toc-link"><span class="n">06</span> Terminal</a>
+      <a href="#s7" class="toc-link"><span class="n">07</span> Quick Commands</a>
+      <a href="#s8" class="toc-link"><span class="n">08</span> Output Panel</a>
+      <a href="#s9" class="toc-link"><span class="n">09</span> File Browser</a>
+      <a href="#s10" class="toc-link"><span class="n">10</span> File Editor</a>
+      <a href="#s11" class="toc-link"><span class="n">11</span> New File</a>
+      <a href="#s12" class="toc-link"><span class="n">12</span> Delete File</a>
+      <a href="#s13" class="toc-link"><span class="n">13</span> Upload</a>
+      <a href="#s14" class="toc-link"><span class="n">14</span> Bookmarks</a>
+      <a href="#s15" class="toc-link"><span class="n">15</span> Themes</a>
+      <a href="#s16" class="toc-link"><span class="n">16</span> Responsive</a>
+    </div>
+
+    <div class="toc-section">
+      <div class="toc-section-label">Reference</div>
+      <a href="#security" class="toc-link">Security Notes</a>
+    </div>
+  </nav>
+
+  <!-- ── Main ── -->
+  <div class="main">
+
+    <!-- Top bar -->
+    <div class="topbar">
+      <span class="mobile-title">⚡ Reconnect Docs</span>
+      <span class="badge">v1.0</span>
+      <button class="theme-btn" onclick="toggleTheme()">
+        <span id="theme-icon">☀️</span>
+        <span id="theme-label">Light Mode</span>
+      </button>
+    </div>
+
+    <div class="content">
+
+      <!-- ═══ HERO ═══ -->
+      <section id="hero" class="hero">
+        <div class="hero-tag">✦ Self-hosted SSH Manager</div>
+        <h1 class="hero-title">Reconnect</h1>
+        <p class="hero-desc">
+          A browser-based SSH manager that lets you connect to remote servers, run commands, manage files, and monitor system stats — all without installing a native client. Open a tab, log in, and you're in.
+        </p>
+        <div class="hero-meta">
+          <span class="pill"><span class="dot green"></span> AES-256-GCM Encryption</span>
+          <span class="pill"><span class="dot purple"></span> WebSocket PTY</span>
+          <span class="pill"><span class="dot teal"></span> Monaco Editor</span>
+          <span class="pill"><span class="dot green"></span> Self-hosted</span>
+          <span class="pill"><span class="dot purple"></span> Responsive</span>
+        </div>
+      </section>
+
+      <hr class="hr">
+
+      <!-- ═══ FEATURES ═══ -->
+      <section id="features" class="section-block">
+        <h2>Key Features</h2>
+        <div class="feature-grid">
+          <div class="feat-card">
+            <span class="feat-icon">🖥️</span>
+            <div class="feat-name">Multi-server Management</div>
+            <div class="feat-desc">Add, edit, and delete SSH servers with password, private key, or OTP auth modes.</div>
+          </div>
+          <div class="feat-card">
+            <span class="feat-icon">⌨️</span>
+            <div class="feat-name">Interactive Terminal</div>
+            <div class="feat-desc">Full xterm.js PTY session with colour, resize, and keyboard shortcut support.</div>
+          </div>
+          <div class="feat-card">
+            <span class="feat-icon">⚡</span>
+            <div class="feat-name">Quick Commands</div>
+            <div class="feat-desc">Store frequently-used commands and replay them in one click.</div>
+          </div>
+          <div class="feat-card">
+            <span class="feat-icon">📡</span>
+            <div class="feat-name">Live Streaming Output</div>
+            <div class="feat-desc">Ad-hoc command output streamed in real-time via Server-Sent Events.</div>
+          </div>
+          <div class="feat-card">
+            <span class="feat-icon">📂</span>
+            <div class="feat-name">Remote File Browser</div>
+            <div class="feat-desc">Navigate, upload, create, edit, and delete files via SFTP with Monaco editor.</div>
+          </div>
+          <div class="feat-card">
+            <span class="feat-icon">🔖</span>
+            <div class="feat-name">Bookmarks</div>
+            <div class="feat-desc">Pin frequently accessed remote paths for instant one-click navigation.</div>
+          </div>
+          <div class="feat-card">
+            <span class="feat-icon">📊</span>
+            <div class="feat-name">Server Overview</div>
+            <div class="feat-desc">Live bento dashboard: CPU, memory, disk, load, uptime, and OS info.</div>
+          </div>
+          <div class="feat-card">
+            <span class="feat-icon">🎨</span>
+            <div class="feat-name">Theme Toggle</div>
+            <div class="feat-desc">Switch between dark and light themes instantly, persisted in localStorage.</div>
+          </div>
+          <div class="feat-card">
+            <span class="feat-icon">📱</span>
+            <div class="feat-name">Responsive Design</div>
+            <div class="feat-desc">Fully usable on mobile with collapsible rail and bottom navigation bar.</div>
+          </div>
+        </div>
+      </section>
+
+      <hr class="hr">
+
+      <!-- ═══ ARCHITECTURE ═══ -->
+      <section id="architecture" class="section-block">
+        <h2>Architecture at a Glance</h2>
+
+        <div class="arch-box">
+          <div class="arch-diagram">
+            <div class="arch-node">
+              <div class="label">🌐 Browser UI</div>
+              <div class="sublabel">Vanilla ES Modules</div>
+            </div>
+            <div class="arch-arrow">
+              <div class="proto">HTTP REST + SSE</div>
+              <div class="line">────→</div>
+            </div>
+            <div class="arch-node">
+              <div class="label">⚙️ Express.js</div>
+              <div class="sublabel">Node.js Server</div>
+            </div>
+            <div class="arch-arrow">
+              <div class="proto">ssh2</div>
+              <div class="line">────→</div>
+            </div>
+            <div class="arch-node">
+              <div class="label">🔒 SSH / SFTP</div>
+              <div class="sublabel">PTY + Channels</div>
+            </div>
+            <div class="arch-arrow">
+              <div class="proto">TCP :22</div>
+              <div class="line">────→</div>
+            </div>
+            <div class="arch-node">
+              <div class="label">🖥️ Remote Server</div>
+              <div class="sublabel">Your SSH target</div>
+            </div>
+          </div>
+        </div>
+
+        <ul class="feat-list">
+          <li><span class="bullet">→</span> <span><strong>Browser → Express</strong>: REST API for CRUD operations; Server-Sent Events for streaming command output; WebSocket for interactive PTY.</span></li>
+          <li><span class="bullet">→</span> <span><strong>Express → SSH</strong>: The <code>ssh2</code> library manages connections, SFTP channels, and PTY allocation.</span></li>
+          <li><span class="bullet">→</span> <span><strong>SQLite</strong>: Stores server configurations (encrypted credentials), saved commands, and bookmarked file paths via <code>better-sqlite3</code>.</span></li>
+          <li><span class="bullet">→</span> <span><strong>Encryption</strong>: Credentials are encrypted with AES-256-GCM before being written to the database.</span></li>
+        </ul>
+      </section>
+
+      <hr class="hr">
+
+      <!-- ═══ GETTING STARTED ═══ -->
+      <section id="getting-started" class="section-block">
+        <h2>Getting Started</h2>
+
+        <h3>Prerequisites</h3>
+        <ul class="feat-list" style="margin-bottom:1.25rem;">
+          <li><span class="bullet">✓</span> Node.js 18 or later</li>
+          <li><span class="bullet">✓</span> An SSH server to connect to</li>
+        </ul>
+
+        <h3>Installation</h3>
+        <pre style="position:relative"><span class="pre-label">bash</span><code><span class="cm"># Clone the repository</span>
+<span class="fn">git</span> clone &lt;repo-url&gt;
+<span class="fn">cd</span> reconnect
+
+<span class="cm"># Install dependencies</span>
+<span class="fn">npm</span> install
+
+<span class="cm"># (Optional) Set an application password</span>
+<span class="fn">echo</span> <span class="st">"APP_PASSWORD=your-secret"</span> &gt; .env
+
+<span class="cm"># Start the server</span>
+<span class="fn">npm</span> start
+<span class="cm"># → Listening on http://127.0.0.1:3456</span></code></pre>
+
+        <div class="callout info">
+          <span class="icon">💡</span>
+          <span><strong>Development tip:</strong> If <code>APP_PASSWORD</code> is <strong>not</strong> set in your <code>.env</code>, the application <strong>skips the login screen entirely</strong> and loads the main UI directly — just <code>npm start</code> and go. Set <code>APP_PASSWORD</code> before exposing the app to any network.</span>
+        </div>
+      </section>
+
+      <!-- ─── Walkthrough divider ─── -->
+      <div class="section-divider">
+        <div class="line"></div>
+        <div class="lbl">✦ Feature Walkthrough</div>
+        <div class="line"></div>
+      </div>
+
+      <!-- ═══ 1 — LOGIN ═══ -->
+      <section id="s1" class="section-block">
+        <div class="section-header">
+          <div class="section-num">01</div>
+          <div class="section-title">Login</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/01-login.png" alt="Login page desktop"></td>
+            <td><img src="screenshots/01-login-mobile.png" alt="Login page mobile"></td>
+          </tr></tbody>
+        </table>
+        <p style="color:var(--muted);font-size:.9rem;">
+          If you have configured <code>APP_PASSWORD</code>, Reconnect shows a simple login form on first visit. Enter the password and click <strong>Login</strong> to reach the main UI. The session is cookie-based and automatically validated on every request.
+        </p>
+        <div class="callout tip" style="margin-top:.85rem;">
+          <span class="icon">🚀</span>
+          <span>No <code>APP_PASSWORD</code> set? The login screen is bypassed automatically — ideal for local development.</span>
+        </div>
+      </section>
+
+      <!-- ═══ 2 — APP SHELL ═══ -->
+      <section id="s2" class="section-block">
+        <div class="section-header">
+          <div class="section-num">02</div>
+          <div class="section-title">App Shell &amp; Sidebar</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/02-app-shell.png" alt="App shell desktop"></td>
+            <td><img src="screenshots/02-app-shell-mobile.png" alt="App shell mobile"></td>
+          </tr></tbody>
+        </table>
+        <ul class="feat-list">
+          <li><span class="bullet">◈</span> <span><strong>Left rail</strong> — icon strip with Settings, theme toggle, and tab navigation buttons.</span></li>
+          <li><span class="bullet">◈</span> <span><strong>Sidebar</strong> — scrollable list of saved SSH servers with label, host, and live status dot.</span></li>
+          <li><span class="bullet">◈</span> <span><strong>Main panel</strong> — renders Overview, Terminal, or Files based on the active tab.</span></li>
+          <li><span class="bullet">◈</span> <span>On mobile, sidebar collapses behind a menu toggle; bottom navigation bar handles tab switching.</span></li>
+        </ul>
+      </section>
+
+      <!-- ═══ 3 — SERVERS ═══ -->
+      <section id="s3" class="section-block">
+        <div class="section-header">
+          <div class="section-num">03</div>
+          <div class="section-title">Managing Servers (Add / Edit / Delete)</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/03-add-server.png" alt="Add server desktop"></td>
+            <td><img src="screenshots/03-add-server-mobile.png" alt="Add server mobile"></td>
+          </tr></tbody>
+        </table>
+        <p style="color:var(--muted);font-size:.9rem;margin-bottom:1rem;">Click the <strong>＋</strong> button in the sidebar header to open the Add Server modal.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Field</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td>Label</td><td>Friendly display name for the server</td></tr>
+              <tr><td>Host</td><td>IP address or hostname</td></tr>
+              <tr><td>Port</td><td>Default <code>22</code></td></tr>
+              <tr><td>Username</td><td>SSH login user</td></tr>
+              <tr><td>Auth mode</td><td>Password / Private key / OTP — switch via tabs</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <table class="shots-table" style="margin-top:1rem;">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/04-edit-server.png" alt="Edit server desktop"></td>
+            <td><img src="screenshots/04-edit-server-mobile.png" alt="Edit server mobile"></td>
+          </tr></tbody>
+        </table>
+        <p style="color:var(--muted);font-size:.9rem;margin-top:.5rem;">Hover a server row and click the pencil icon to edit. Delete via the trash icon with a confirmation prompt. Credentials are encrypted with <strong>AES-256-GCM</strong>.</p>
+      </section>
+
+      <!-- ═══ 4 — SETTINGS ═══ -->
+      <section id="s4" class="section-block">
+        <div class="section-header">
+          <div class="section-num">04</div>
+          <div class="section-title">Settings</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/05-settings.png" alt="Settings desktop"></td>
+            <td><img src="screenshots/05-settings-mobile.png" alt="Settings mobile"></td>
+          </tr></tbody>
+        </table>
+        <ul class="feat-list" style="margin-top:.85rem;">
+          <li><span class="bullet">⚙</span> Switch global auth mode between <strong>Legacy (password)</strong> and <strong>OTP</strong>.</li>
+          <li><span class="bullet">⚙</span> Manage the application-level login password (<code>APP_PASSWORD</code>).</li>
+        </ul>
+      </section>
+
+      <!-- ═══ 5 — OVERVIEW ═══ -->
+      <section id="s5" class="section-block">
+        <div class="section-header">
+          <div class="section-num">05</div>
+          <div class="section-title">Server Overview: Before &amp; After Connection</div>
+        </div>
+        <p style="color:var(--muted);font-size:.9rem;margin-bottom:1.25rem;">
+          Reconnect distinguishes between a <strong>selected</strong> server (just clicked) and a <strong>connected</strong> server (active SSH session).
+        </p>
+
+        <h3>🔴 Before Connection</h3>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/06-overview-disconnected.png" alt="Overview disconnected desktop"></td>
+            <td><img src="screenshots/06-overview-disconnected-mobile.png" alt="Overview disconnected mobile"></td>
+          </tr></tbody>
+        </table>
+
+        <h3>🟢 After Connection — Live Stats</h3>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/07-overview-connected.png" alt="Overview connected desktop"></td>
+            <td><img src="screenshots/07-overview-connected-mobile.png" alt="Overview connected mobile"></td>
+          </tr></tbody>
+        </table>
+        <ul class="feat-list" style="margin-top:.85rem;">
+          <li><span class="bullet">●</span> <span><strong>Status pill</strong> — green Connected indicator</span></li>
+          <li><span class="bullet">●</span> <span><strong>Hostname &amp; OS</strong> — distribution, kernel version</span></li>
+          <li><span class="bullet">●</span> <span><strong>CPU &amp; Load Average</strong> — model and current usage percentages</span></li>
+          <li><span class="bullet">●</span> <span><strong>Memory &amp; Disk</strong> — used/total with animated progress bars</span></li>
+          <li><span class="bullet">●</span> <span>Stats refresh automatically — no manual polling needed</span></li>
+        </ul>
+      </section>
+
+      <!-- ═══ 6 — TERMINAL ═══ -->
+      <section id="s6" class="section-block">
+        <div class="section-header">
+          <div class="section-num">06</div>
+          <div class="section-title">Interactive Terminal</div>
+        </div>
+
+        <h3>Connected PTY Session</h3>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/08-terminal-connected.png" alt="Terminal desktop"></td>
+            <td><img src="screenshots/08-terminal-connected-mobile.png" alt="Terminal mobile"></td>
+          </tr></tbody>
+        </table>
+
+        <h3>Running a Command</h3>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/09-terminal-command.png" alt="Terminal command desktop"></td>
+            <td><img src="screenshots/09-terminal-command-mobile.png" alt="Terminal command mobile"></td>
+          </tr></tbody>
+        </table>
+        <ul class="feat-list" style="margin-top:.85rem;">
+          <li><span class="bullet">▶</span> Colour rendering, cursor control, and scrollback buffer</li>
+          <li><span class="bullet">▶</span> Automatic resize when panel changes size</li>
+          <li><span class="bullet">▶</span> Keyboard shortcuts pass through (Ctrl-C, tab completion, etc.)</li>
+          <li><span class="bullet">▶</span> Right-click context menu for copy/paste</li>
+        </ul>
+      </section>
+
+      <!-- ═══ 7 — QUICK COMMANDS ═══ -->
+      <section id="s7" class="section-block">
+        <div class="section-header">
+          <div class="section-num">07</div>
+          <div class="section-title">Quick Commands Drawer</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/10-quick-commands.png" alt="Quick commands desktop"></td>
+            <td><img src="screenshots/10-quick-commands-mobile.png" alt="Quick commands mobile"></td>
+          </tr></tbody>
+        </table>
+        <ul class="feat-list" style="margin-top:.85rem;">
+          <li><span class="bullet">⚡</span> Click <strong>⚡ Quick Commands</strong> in the terminal toolbar to open the drawer</li>
+          <li><span class="bullet">⚡</span> Click any row to inject the command into the active terminal and run it immediately</li>
+          <li><span class="bullet">⚡</span> Inline form at the bottom to add new commands; × to delete</li>
+          <li><span class="bullet">⚡</span> Stored in SQLite — persist across sessions</li>
+        </ul>
+      </section>
+
+      <!-- ═══ 8 — OUTPUT PANEL ═══ -->
+      <section id="s8" class="section-block">
+        <div class="section-header">
+          <div class="section-num">08</div>
+          <div class="section-title">Resizable Output / Log Panel</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/11-output-panel.png" alt="Output panel desktop"></td>
+            <td><img src="screenshots/11-output-panel-mobile.png" alt="Output panel mobile"></td>
+          </tr></tbody>
+        </table>
+        <div class="callout info" style="margin-top:.85rem;">
+          <span class="icon">↕️</span>
+          <span>Drag the <strong>divider handle</strong> between terminal and output panel to resize either region. Preferred ratio is stored in <code>localStorage</code> and persists across reloads. The output panel streams ad-hoc command results via Server-Sent Events — keeping one-off output separate from your PTY session.</span>
+        </div>
+      </section>
+
+      <!-- ═══ 9 — FILE BROWSER ═══ -->
+      <section id="s9" class="section-block">
+        <div class="section-header">
+          <div class="section-num">09</div>
+          <div class="section-title">Remote File Browser</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/12-files-tree.png" alt="File tree desktop"></td>
+            <td><img src="screenshots/12-files-tree-mobile.png" alt="File tree mobile"></td>
+          </tr></tbody>
+        </table>
+        <ul class="feat-list" style="margin-top:.85rem;">
+          <li><span class="bullet">📁</span> Click any <strong>folder</strong> row to expand/collapse it</li>
+          <li><span class="bullet">📁</span> Use the <strong>breadcrumb bar</strong> to jump to any ancestor directory</li>
+          <li><span class="bullet">📁</span> Click the <strong>pencil icon</strong> next to the path to type and navigate directly</li>
+          <li><span class="bullet">📁</span> Click <strong>🔄 Refresh</strong> to re-fetch the current directory</li>
+        </ul>
+      </section>
+
+      <!-- ═══ 10 — FILE EDITOR ═══ -->
+      <section id="s10" class="section-block">
+        <div class="section-header">
+          <div class="section-num">10</div>
+          <div class="section-title">Viewing &amp; Editing a File (Monaco Editor)</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/14-file-view.png" alt="Monaco editor desktop"></td>
+            <td><img src="screenshots/14-file-view-mobile.png" alt="Monaco editor mobile"></td>
+          </tr></tbody>
+        </table>
+        <ul class="feat-list" style="margin-top:.85rem;">
+          <li><span class="bullet">📝</span> Syntax highlighting for hundreds of languages (auto-detected from extension)</li>
+          <li><span class="bullet">📝</span> Find / replace, multi-cursor, bracket matching</li>
+          <li><span class="bullet">📝</span> <strong>Save to Remote</strong> — writes the buffer back to the server via SFTP</li>
+          <li><span class="bullet">📝</span> <strong>Download</strong> — saves a local copy without touching the remote file</li>
+          <li><span class="bullet">📝</span> <strong>Compile</strong> — runs <code>sh compile.sh &lt;filename&gt;</code> in the <code>source_compile</code> directory and streams build output to the output panel</li>
+        </ul>
+        <div class="callout warn" style="margin-top:.85rem;">
+          <span class="icon">⚠️</span>
+          <span><strong>Note:</strong> Compile should be done after saving, and only when new changes have been applied.</span>
+        </div>
+      </section>
+
+      <!-- ═══ 11 — NEW FILE ═══ -->
+      <section id="s11" class="section-block">
+        <div class="section-header">
+          <div class="section-num">11</div>
+          <div class="section-title">Creating a New File</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/13-new-file.png" alt="New file desktop"></td>
+            <td><img src="screenshots/13-new-file-mobile.png" alt="New file mobile"></td>
+          </tr></tbody>
+        </table>
+        <p style="color:var(--muted);font-size:.9rem;margin-top:.85rem;">
+          Click <strong>+ New File</strong> in the Files toolbar. A prompt asks for the filename; the new file is created in the current directory and opens immediately in Monaco. Press <strong>Save</strong> to write the initial content to the remote server via SFTP.
+        </p>
+      </section>
+
+      <!-- ═══ 12 — DELETE ═══ -->
+      <section id="s12" class="section-block">
+        <div class="section-header">
+          <div class="section-num">12</div>
+          <div class="section-title">Deleting a File</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/17-delete-confirm.png" alt="Delete confirm desktop"></td>
+            <td><img src="screenshots/17-delete-confirm-mobile.png" alt="Delete confirm mobile"></td>
+          </tr></tbody>
+        </table>
+        <p style="color:var(--muted);font-size:.9rem;margin-top:.85rem;">
+          With a file open in Monaco, click the <strong>🗑 Delete</strong> button. A confirmation modal appears — click <strong>OK</strong> to permanently remove the file, or <strong>Cancel</strong> to abort. The file tree refreshes automatically after deletion.
+        </p>
+      </section>
+
+      <!-- ═══ 13 — UPLOAD ═══ -->
+      <section id="s13" class="section-block">
+        <div class="section-header">
+          <div class="section-num">13</div>
+          <div class="section-title">Upload a File</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/15-upload.png" alt="Upload desktop"></td>
+            <td><img src="screenshots/15-upload-mobile.png" alt="Upload mobile"></td>
+          </tr></tbody>
+        </table>
+        <p style="color:var(--muted);font-size:.9rem;margin-top:.85rem;">
+          Click <strong>↑ Upload</strong> in the Files toolbar to open a native file picker. Reconnect uploads the selected file to the <strong>current directory</strong> via SFTP. No temporary files are created server-side — the upload streams directly to the destination path.
+        </p>
+      </section>
+
+      <!-- ═══ 14 — BOOKMARKS ═══ -->
+      <section id="s14" class="section-block">
+        <div class="section-header">
+          <div class="section-num">14</div>
+          <div class="section-title">Bookmarks</div>
+        </div>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/16-bookmarks.png" alt="Bookmarks desktop"></td>
+            <td><img src="screenshots/16-bookmarks-mobile.png" alt="Bookmarks mobile"></td>
+          </tr></tbody>
+        </table>
+        <ul class="feat-list" style="margin-top:.85rem;">
+          <li><span class="bullet">🔖</span> Click <strong>🔖 Bookmark</strong> with any file or directory open to save the path</li>
+          <li><span class="bullet">🔖</span> Open the <strong>Bookmarks drawer</strong> to see all saved paths as chips</li>
+          <li><span class="bullet">🔖</span> Click any chip to navigate directly to that path in the file tree</li>
+          <li><span class="bullet">🔖</span> Stored in SQLite and persist across sessions; × to remove a bookmark</li>
+        </ul>
+      </section>
+
+      <!-- ═══ 15 — THEMES ═══ -->
+      <section id="s15" class="section-block">
+        <div class="section-header">
+          <div class="section-num">15</div>
+          <div class="section-title">Theme Toggle</div>
+        </div>
+
+        <p style="margin-bottom:.5rem;font-weight:600;">🌙 Dark Mode (default)</p>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/18-light-theme.png" alt="Dark theme desktop"></td>
+            <td><img src="screenshots/18-light-theme-mobile.png" alt="Dark theme mobile"></td>
+          </tr></tbody>
+        </table>
+
+        <p style="margin-top:1rem;margin-bottom:.5rem;font-weight:600;">☀️ Light Mode</p>
+        <table class="shots-table">
+          <thead><tr><th>Desktop</th><th>Mobile</th></tr></thead>
+          <tbody><tr>
+            <td><img src="screenshots/19-dark-theme.png" alt="Light theme desktop"></td>
+            <td><img src="screenshots/19-dark-theme-mobile.png" alt="Light theme mobile"></td>
+          </tr></tbody>
+        </table>
+
+        <p style="color:var(--muted);font-size:.9rem;margin-top:.85rem;">
+          Click the <strong>🌙 / ☀</strong> icon in the left rail to switch themes instantly. The preference is stored in <code>localStorage</code> and persists across page reloads.
+        </p>
+      </section>
+
+      <!-- ═══ 16 — RESPONSIVE ═══ -->
+      <section id="s16" class="section-block">
+        <div class="section-header">
+          <div class="section-num">16</div>
+          <div class="section-title">Responsive Design</div>
+        </div>
+        <div class="callout tip">
+          <span class="icon">📱</span>
+          <span>Every feature was tested at <strong>1440 × 900 px</strong> (desktop) and <strong>390 × 844 px</strong> (iPhone 14 equivalent). All mobile screenshots were captured with a Mobile Safari user-agent.</span>
+        </div>
+        <ul class="feat-list" style="margin-top:1rem;">
+          <li><span class="bullet">◉</span> <span><strong>Collapsible sidebar</strong> — slides in from the left via a menu toggle on narrow viewports</span></li>
+          <li><span class="bullet">◉</span> <span><strong>Bottom navigation bar</strong> — replaces the left rail for Overview / Terminal / Files switching on mobile</span></li>
+          <li><span class="bullet">◉</span> <span><strong>Reflowing panels</strong> — modals, file tree, Monaco editor, and output panels fill available width</span></li>
+          <li><span class="bullet">◉</span> <span><strong>Touch-friendly targets</strong> — generous tap areas for reliable touch interaction</span></li>
+        </ul>
+      </section>
+
+      <hr class="hr">
+
+      <!-- ═══ SECURITY ═══ -->
+      <section id="security" class="section-block">
+        <h2>Security Notes</h2>
+        <div class="table-wrap">
+          <table class="sec-table">
+            <thead><tr><th>Concern</th><th>How Reconnect Addresses It</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Credential storage</td>
+                <td>SSH passwords and private keys are encrypted with <strong>AES-256-GCM</strong> before being written to SQLite. The encryption key is derived from a <code>.secret</code> file generated on first run.</td>
+              </tr>
+              <tr>
+                <td>Application access</td>
+                <td>Protected by <code>APP_PASSWORD</code>; all routes check a signed session cookie. In development, omitting <code>APP_PASSWORD</code> bypasses the login screen for convenience.</td>
+              </tr>
+              <tr>
+                <td>Network exposure</td>
+                <td>Server binds to <code>127.0.0.1</code> by default — not reachable from other machines unless you explicitly change <code>HOST</code>.</td>
+              </tr>
+              <tr>
+                <td>Session management</td>
+                <td>Sessions are signed with a random key; tampering with the cookie invalidates it immediately.</td>
+              </tr>
+              <tr>
+                <td>SFTP operations</td>
+                <td>File reads and writes go through the SSH connection — no additional ports need to be opened.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div><!-- /content -->
+
+    <footer class="footer">
+      <em>Documentation generated from a live Reconnect instance at <code>http://127.0.0.1:3456/</code> connected to the Imapi SSH server. A throwaway file <code>/tmp/reconnect-demo.txt</code> was created and deleted during documentation generation to demonstrate file CRUD and bookmarking; no production data was touched.</em>
+    </footer>
+
+  </div><!-- /main -->
+
+</div><!-- /layout -->
+
+<button class="mobile-toc-btn" onclick="scrollTop()" title="Back to top">↑</button>
+
+<script>
+  // ── Theme toggle
+  function toggleTheme() {
+    const html = document.documentElement;
+    const isDark = html.getAttribute('data-theme') === 'dark';
+    html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+    document.getElementById('theme-icon').textContent = isDark ? '🌙' : '☀️';
+    document.getElementById('theme-label').textContent = isDark ? 'Dark Mode' : 'Light Mode';
+  }
+
+
+  // ── Active TOC link on scroll
+  const sections = document.querySelectorAll('[id]');
+  const tocLinks = document.querySelectorAll('.toc-link');
+
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        tocLinks.forEach(l => l.classList.remove('active'));
+        const link = document.querySelector(`.toc-link[href="#${entry.target.id}"]`);
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+
+  sections.forEach(s => observer.observe(s));
+
+  // ── Scroll top
+  function scrollTop() { window.scrollTo({ top: 0, behavior: 'smooth' }); }
+</script>
+</body>
+</html>
