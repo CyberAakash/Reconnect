@@ -3,10 +3,12 @@ module.exports = {
     {
       name: 'reconnect',
       script: 'server.js',
-      // Pin to Node 20 — better-sqlite3's native binding is built for ABI 115.
-      // The default `node` on PATH is Zed's v24 (ABI 137) and will fail to dlopen.
-      interpreter: '/Users/aakash-22269/.nvm/versions/node/v20.19.4/bin/node',
-      cwd: '/Users/aakash-22269/Zoho/Tools/REConnect',
+      // Runs on the `node` already on PATH (no machine-specific pin). The only
+      // native dependency is better-sqlite3 — `npm install` (or `npm rebuild
+      // better-sqlite3`) builds its binding for whatever Node you use, so if you
+      // switch Node major versions and see ERR_DLOPEN_FAILED, just rebuild.
+      // Requires Node >= 20 (see package.json "engines").
+      cwd: __dirname,
       // Original setup ran on 8899; server.js defaults to 9898 without this.
       env: { PORT: 8899 },
       // Guard against crash-loop storms (was at 282k restarts before this fix).
