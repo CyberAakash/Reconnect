@@ -674,14 +674,19 @@
         <h2>Key Features</h2>
         <div class="feature-grid">
           <div class="feat-card">
+            <span class="feat-icon">🔐</span>
+            <div class="feat-name">OTP / Zero-Trust Auth (default)</div>
+            <div class="feat-desc">Passcode-per-login via the org's ZAC zero-trust gateway. Legacy password/key auth remains as a fallback but is being phased out.</div>
+          </div>
+          <div class="feat-card">
             <span class="feat-icon">🖥️</span>
             <div class="feat-name">Multi-server Management</div>
-            <div class="feat-desc">Add, edit, and delete SSH servers with password, private key, or OTP auth modes.</div>
+            <div class="feat-desc">Add, edit, and delete SSH servers; switch the global auth flow (OTP / legacy) in Settings.</div>
           </div>
           <div class="feat-card">
             <span class="feat-icon">⌨️</span>
             <div class="feat-name">Interactive Terminal</div>
-            <div class="feat-desc">Full xterm.js PTY session with colour, resize, and keyboard shortcut support.</div>
+            <div class="feat-desc">A live xterm PTY in legacy mode; a command console in OTP mode (one shell per login — use real ssh for vim/htop).</div>
           </div>
           <div class="feat-card">
             <span class="feat-icon">⚡</span>
@@ -696,7 +701,7 @@
           <div class="feat-card">
             <span class="feat-icon">📂</span>
             <div class="feat-name">Remote File Browser</div>
-            <div class="feat-desc">Navigate, upload, create, edit, and delete files via SFTP with Monaco editor.</div>
+            <div class="feat-desc">Navigate, upload, create, edit, and delete files with a Monaco editor — over SFTP (legacy) or tunnelled through the shell (OTP).</div>
           </div>
           <div class="feat-card">
             <span class="feat-icon">🔖</span>
@@ -969,7 +974,7 @@
               <tr><td>Host</td><td>IP address or hostname</td></tr>
               <tr><td>Port</td><td>Default <code>22</code></td></tr>
               <tr><td>Username</td><td>SSH login user</td></tr>
-              <tr><td>Auth mode</td><td>Password / Private key / OTP — switch via tabs</td></tr>
+              <tr><td>Credential</td><td>In <strong>OTP mode</strong> (default) none is needed — you authenticate with an emailed passcode at connect time. In <strong>legacy mode</strong>, provide a password or private-key path.</td></tr>
             </tbody>
           </table>
         </div>
@@ -997,9 +1002,11 @@
           </tr></tbody>
         </table>
         <ul class="feat-list" style="margin-top:.85rem;">
-          <li><span class="bullet">⚙</span> Switch global auth mode between <strong>Legacy (password)</strong> and <strong>OTP</strong>.</li>
+          <li><span class="bullet">⚙</span> Switch the global authentication flow between <strong>OTP (default, recommended)</strong> and <strong>Legacy (password/key)</strong>. Legacy is a fallback that is <strong>being phased out</strong> and will be removed in a future release.</li>
+          <li><span class="bullet">⚙</span> Changing the flow drops pooled sessions so each server re-authenticates under the new flow.</li>
           <li><span class="bullet">⚙</span> Manage the application-level login password (<code>APP_PASSWORD</code>).</li>
         </ul>
+        <div class="callout info" style="margin-top:1rem;"><span class="icon">ℹ️</span> <span>See <strong>Authentication (OTP / Zero-Trust)</strong> below for how OTP works and what it changes about the Terminal and Files tabs.</span></div>
       </section>
 
       <!-- ═══ 5 — OVERVIEW ═══ -->
@@ -1062,12 +1069,20 @@
             <td><img src="screenshots/09-terminal-command-mobile.png" alt="Terminal command mobile"></td>
           </tr></tbody>
         </table>
-        <ul class="feat-list" style="margin-top:.85rem;">
+        <p style="margin:.4rem 0 .6rem;"><strong>Legacy mode</strong> — a full live PTY:</p>
+        <ul class="feat-list">
           <li><span class="bullet">▶</span> Colour rendering, cursor control, and scrollback buffer</li>
           <li><span class="bullet">▶</span> Automatic resize when panel changes size</li>
           <li><span class="bullet">▶</span> Keyboard shortcuts pass through (Ctrl-C, tab completion, etc.)</li>
           <li><span class="bullet">▶</span> Right-click context menu for copy/paste</li>
         </ul>
+        <p style="margin:.8rem 0 .6rem;"><strong>OTP mode</strong> — a <strong>command console</strong> (the zero-trust gateway allows one interactive shell per login):</p>
+        <ul class="feat-list">
+          <li><span class="bullet">▶</span> Type a command, press Enter, see the output; working-directory-aware prompt</li>
+          <li><span class="bullet">▶</span> Command history with ↑/↓; Ctrl-C cancels a running command</li>
+          <li><span class="bullet">▶</span> No full-screen TUIs (vim/htop/less) — use a real <code>ssh</code> session for those</li>
+        </ul>
+        <div class="callout info" style="margin-top:1rem;"><span class="icon">ℹ️</span> <span>See <strong>Authentication (OTP / Zero-Trust)</strong> below for why OTP mode works this way.</span></div>
       </section>
 
       <!-- ═══ 7 — QUICK COMMANDS ═══ -->
@@ -1129,6 +1144,7 @@
           <li><span class="bullet">📁</span> Click the <strong>pencil icon</strong> next to the path to type and navigate directly</li>
           <li><span class="bullet">📁</span> Click <strong>🔄 Refresh</strong> to re-fetch the current directory</li>
         </ul>
+        <div class="callout info" style="margin-top:1rem;"><span class="icon">ℹ️</span> <span><strong>Auth flow note:</strong> in <strong>legacy mode</strong> the browser and all file operations use <strong>SFTP</strong>. In <strong>OTP mode</strong> the gateway blocks SFTP, so the same operations run as shell commands over the single shell (file contents move as base64) — same experience, just slower for very large/binary files. When not connected, the tab shows a <strong>Connect</strong> button.</span></div>
       </section>
 
       <!-- ═══ 10 — FILE EDITOR ═══ -->
@@ -1147,9 +1163,9 @@
         <ul class="feat-list" style="margin-top:.85rem;">
           <li><span class="bullet">📝</span> Syntax highlighting for hundreds of languages (auto-detected from extension)</li>
           <li><span class="bullet">📝</span> Find / replace, multi-cursor, bracket matching</li>
-          <li><span class="bullet">📝</span> <strong>Save to Remote</strong> — writes the buffer back to the server via SFTP</li>
-          <li><span class="bullet">📝</span> <strong>Download</strong> — saves a local copy without touching the remote file</li>
-          <li><span class="bullet">📝</span> <strong>Compile</strong> — runs <code>sh compile.sh &lt;filename&gt;</code> in the <code>source_compile</code> directory and streams build output to the output panel</li>
+          <li><span class="bullet">📝</span> <span><strong>Save to Remote</strong> — writes the buffer back to the server (SFTP in legacy mode; base64 over the shell in OTP mode)</span></li>
+          <li><span class="bullet">📝</span> <span><strong>Download</strong> — saves a local copy without touching the remote file</span></li>
+          <li><span class="bullet">📝</span> <span><strong>Compile</strong> — runs <code>sh compile.sh &lt;filename&gt;</code> in the <code>source_compile</code> directory and streams build output to the output panel</span></li>
         </ul>
         <div class="callout warn" style="margin-top:.85rem;">
           <span class="icon">⚠️</span>
@@ -1278,6 +1294,58 @@
           <li><span class="bullet">◉</span> <span><strong>Reflowing panels</strong> — modals, file tree, Monaco editor, and output panels fill available width</span></li>
           <li><span class="bullet">◉</span> <span><strong>Touch-friendly targets</strong> — generous tap areas for reliable touch interaction</span></li>
         </ul>
+      </section>
+
+      <hr class="hr">
+
+      <!-- ═══ AUTHENTICATION (OTP / ZERO-TRUST) ═══ -->
+      <section id="auth" class="section-block">
+        <h2>Authentication (OTP / Zero-Trust)</h2>
+        <div class="callout info">
+          <span class="icon">🔐</span>
+          <span><strong>OTP is the default and recommended flow.</strong> The legacy password/key flow is a fallback that is <strong>being phased out</strong> and will be removed in a future release. Switch flows in <strong>Settings (⚙)</strong>.</span>
+        </div>
+
+        <h3>How OTP works</h3>
+        <p style="color:var(--muted);font-size:.92rem;margin:.4rem 0 .7rem;">SSH access is password-less and certificate-based through the org's zero-trust gateway (ZAC). You never store or type a server password — an emailed one-time passcode authorizes each login.</p>
+        <ul class="feat-list">
+          <li><span class="bullet">1</span> <span>You click <strong>Connect</strong>; the session is intercepted by <strong>0Agent</strong> and tunnelled via <strong>ServiceEdge</strong> to the <strong>AppConnector</strong> in the target DC.</span></li>
+          <li><span class="bullet">2</span> <span>The AppConnector enforces <strong>department/access policy</strong>, then prompts for an <strong>OTP</strong> (REConnect shows a passcode modal).</span></li>
+          <li><span class="bullet">3</span> <span>Enter the OTP from your <strong>Zoho email</strong>. The AppConnector gets a short-lived <strong>ZAC-signed certificate</strong> and connects you to the target server.</span></li>
+        </ul>
+
+        <pre style="position:relative"><span class="pre-label">flow</span><code>You ─▶ 0Agent ─▶ ServiceEdge ─▶ AppConnector ──(OTP + dept policy)──▶ ZAC (signs cert)
+                                        └────────────(cert auth)────────────▶ Target SSH server</code></pre>
+
+        <div class="callout info">
+          <span class="icon">🛡️</span>
+          <span>The gateway allows <strong>one interactive shell per login</strong> and blocks <strong>SFTP, SCP, port forwarding, X11 / agent forwarding</strong> at the network layer — even if enabled on the target.</span>
+        </div>
+
+        <h3>What that changes in REConnect</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Capability</th><th>Legacy mode</th><th>OTP mode</th></tr></thead>
+            <tbody>
+              <tr><td>Connect</td><td>Direct, stored password/key</td><td>Tunnel + emailed OTP (no stored credential)</td></tr>
+              <tr><td>Terminal</td><td>Live PTY (vim/htop work)</td><td>Command console (no full-screen TUIs in-app)</td></tr>
+              <tr><td>Files / editor</td><td>SFTP</td><td>Shell commands + base64 over the one shell</td></tr>
+              <tr><td>Channels</td><td>Many</td><td>One shared interactive shell</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Prerequisites for OTP access</h3>
+        <ul class="feat-list">
+          <li><span class="bullet">✓</span> <span><strong>Policy / ZService access</strong> — request via the PAM support channel, or have your team DRI email <code>pam-support@zohocorp.com</code> (CC your manager) with your email, ZService name(s), and department. Wait for approval.</span></li>
+          <li><span class="bullet">✓</span> <span><strong>0Agent network</strong> — set the default network to the right zero-host (e.g. <em>CT1 Localzoho Network</em>) and reload policies; revert to <em>none</em> when done.</span></li>
+          <li><span class="bullet">✓</span> <span><strong>Verify first</strong> — <code>ssh sas@&lt;server-ip&gt;</code> should prompt for an OTP in a plain terminal.</span></li>
+        </ul>
+
+        <h3>Common issue — “Host key verification failed”</h3>
+        <p style="color:var(--muted);font-size:.92rem;margin:.4rem 0 .7rem;">If SSH refuses to connect because the server's key changed, remove the stale entry and reconnect (affects only that host):</p>
+        <pre style="position:relative"><span class="pre-label">bash</span><code><span class="cm"># replace with your server IP</span>
+ssh-keygen -R &lt;server-ip&gt;</code></pre>
       </section>
 
       <hr class="hr">
