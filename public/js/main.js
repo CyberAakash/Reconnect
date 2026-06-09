@@ -19,7 +19,7 @@ import { initResizeHandle, _setResizeDeps } from './ui/resize.js';
 // Features
 import { connectServer, disconnectServer, _setConnectDeps } from './features/connect.js';
 import { teardownTerminal, parkTerminal, unparkTerminal, refitTerminal, refreshTerminal, updateTerminalState, renderTerminalTab, runTerminalCommand, _setTerminalDeps } from './features/terminal.js';
-import { renderFilesTab, loadFileTree, renderEditorTabs, saveActiveFile, compileActiveFile, deleteActiveFile, createNewFile, initFileUpload, toggleBookmarksDrawer, loadSavedFiles, toggleBookmark, toggleFileTree, editorResponsiveResize } from './features/files.js';
+import { renderFilesTab, loadFileTree, renderEditorTabs, saveActiveFile, compileActiveFile, deleteActiveFile, createNewFile, initFileUpload, toggleBookmarksDrawer, loadSavedFiles, toggleBookmark, toggleFileTree, editorResponsiveResize, _setFilesConnect } from './features/files.js';
 import { loadQuickCommands, toggleQuickDrawer, addQuickCommand, closeQcModal, saveQuickCommand, _setQuickCommandsDeps } from './features/quickCommands.js';
 
 // Modals
@@ -67,6 +67,9 @@ _setTerminalDeps({
   connectServer,
   loadQuickCommands,
 });
+
+// files needs: connectServer (for the disconnected-state Connect button)
+_setFilesConnect(connectServer);
 
 // quickCommands needs: runTerminalCommand
 _setQuickCommandsDeps(runTerminalCommand);
@@ -182,6 +185,12 @@ async function pollStatus(id) {
       }
       if (newStatus === 'connected' && prevStatus !== 'connected' && !STATE.sysInfo[id] && !STATE.sysInfoLoading[id]) {
         loadSysInfo(id);
+      }
+      // Populate the active tab as soon as a connection comes up (e.g. after the
+      // file-explorer Connect button or the OTP flow completes).
+      if (newStatus === 'connected' && prevStatus !== 'connected' && STATE.selectedId === id) {
+        if (STATE.centerTab === 'files') loadFileTree();
+        else if (STATE.centerTab === 'terminal') updateTerminalState(id);
       }
       if (newStatus === 'disconnected') {
         delete STATE.sysInfo[id];
@@ -469,6 +478,12 @@ function initUI() {
 async function init() {
   initTheme();
   initUI();
+  // Load the auth mode up front so the terminal/feature gating is correct on
+  // first render (not only after the Settings modal is opened).
+  try {
+    const settings = await api('/api/settings');
+    STATE.authMode = settings.auth_mode || 'legacy';
+  } catch { /* default stays 'legacy' */ }
   await _loadServersAndRestore();
 
   // Periodic polling

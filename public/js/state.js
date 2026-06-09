@@ -16,8 +16,12 @@ export const STATE = {
   termHistory: [],
   termHistIdx: -1,
   termRunning: false,
-  termWs: null,         // active WebSocket for PTY shell
+  termWs: null,         // active WebSocket for PTY shell (legacy mode)
   xtermInst: null,      // WTerm instance
+  termConsole: false,   // OTP mode: terminal is a native DOM command console, not a live PTY
+  termConsoleSse: null, // OTP mode: in-flight /exec EventSource
+  _termConsoleEls: null, // OTP mode: { out, inputRow, input } DOM refs for the console
+  _consoleExternal: null, // OTP mode: paste a command into the console input (quick commands)
 
   openFiles: [],       // { path, content, dirty }
   activeFilePath: null,

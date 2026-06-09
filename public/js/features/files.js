@@ -3,10 +3,15 @@ import { icon } from '../icons.js';
 import { api, esc, setBtnLoading } from '../api.js';
 import { toast } from '../ui/toast.js';
 import { confirm } from '../ui/confirm.js';
+import { promptModal } from '../ui/prompt.js';
 import { appendOutput, setOutputPanel, loadOutputForServer } from '../ui/outputPanel.js';
 import { ensureMonaco } from '../monaco.js';
 import { langFor, currentMonacoTheme } from '../monaco.js';
 import { applyEditorTheme } from '../theme.js';
+
+// connectServer injected at runtime to avoid circular deps
+let _connectServer;
+export function _setFilesConnect(fn) { _connectServer = fn; }
 
 export function renderFilesTab() {
   const id = STATE.selectedId;
@@ -17,6 +22,22 @@ export function renderFilesTab() {
   loadSavedFiles();
 }
 
+// Render a "not connected" prompt with a Connect button inside the file tree.
+function renderTreeDisconnected(id) {
+  const tree = document.getElementById('file-tree');
+  if (!tree) return;
+  tree.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'rt-tree-disconnected';
+  box.innerHTML = `<div class="t">Not connected</div><div class="s">Open an SSH session to browse files.</div>`;
+  const btn = document.createElement('button');
+  btn.className = 'rt-btn primary sm';
+  btn.innerHTML = `${icon('connect', 13)} <span class="rt-btn-txt">Connect</span>`;
+  btn.onclick = () => _connectServer?.(id);
+  box.appendChild(btn);
+  tree.appendChild(box);
+}
+
 export async function loadFileTree(path) {
   const id = STATE.selectedId;
   if (!id) return;
@@ -24,12 +45,16 @@ export async function loadFileTree(path) {
   const currentPath = path || pathInput?.value || '/home/sas/source_compile/';
   if (pathInput) pathInput.value = currentPath;
   renderBreadcrumbs(currentPath);
+  // Not connected → show a Connect prompt instead of hitting the API.
+  if (STATE.serverStatus[id] !== 'connected') { renderTreeDisconnected(id); return; }
   try {
     const data = await api(`/api/servers/${id}/file/list`, { method: 'POST', body: { path: currentPath } });
     renderFileTree(data.entries || data || [], currentPath);
   } catch (e) {
     const tree = document.getElementById('file-tree');
-    if (tree) tree.innerHTML = `<div class="rt-tree-error">Cannot list directory: ${esc(e.message)}</div>`;
+    if (!tree) return;
+    if (/NOT_CONNECTED/.test(e.message)) { renderTreeDisconnected(id); return; }
+    tree.innerHTML = `<div class="rt-tree-error">Cannot list directory: ${esc(e.message)}</div>`;
   }
 }
 
@@ -390,7 +415,7 @@ async function deleteRemoteFile(path) {
 export async function createNewFile() {
   const pathInput = document.getElementById('tree-path-input');
   const dir  = pathInput?.value || '/home/sas/source_compile/';
-  const name = window.prompt('New file name:', 'untitled.sh');
+  const name = await promptModal({ title: 'New file', label: `Create in ${dir}`, value: 'untitled.sh', okLabel: 'Create' });
   if (!name) return;
   const fullPath = dir.replace(/\/$/, '') + '/' + name;
   const id = STATE.selectedId;
