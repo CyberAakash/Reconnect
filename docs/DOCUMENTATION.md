@@ -7,17 +7,18 @@
 
 ## Key Features
 
-- **Multi-server management** — Add, edit, and delete SSH servers with password, private key, or one-time-password (OTP) auth modes.
-- **Interactive terminal** — Full xterm.js PTY session with colour, resize, and keyboard shortcut support.
+- **OTP / zero-trust authentication (default)** — Passcode-per-login through the org's ZAC certificate-based zero-trust gateway. Legacy password/private-key auth remains as a fallback but is being phased out. See [Authentication & Zero-Trust Flow](#authentication--zero-trust-flow).
+- **Multi-server management** — Add, edit, and delete SSH servers; switch the global auth flow (OTP / legacy) in Settings.
+- **Interactive terminal** — A full xterm.js PTY in legacy mode; a **command console** in OTP mode (the zero-trust gateway permits one interactive shell per login, so full-screen TUIs like `vim`/`htop` aren't available in-app — use a real `ssh` session for those).
 - **Saved (Quick) Commands** — Store frequently-used commands and replay them in one click.
 - **Ad-hoc command streaming** — Run one-off commands with live output streamed via Server-Sent Events.
 - **Resizable output panel** — Drag the split between terminal and output log to suit your workflow.
-- **Remote file browser** — Navigate, upload, create, edit, and delete files with a Monaco-powered code editor.
+- **Remote file browser + editor** — Navigate, upload, create, edit, and delete files with a Monaco-powered editor. Backed by SFTP in legacy mode, or tunnelled through the single shell (base64) in OTP mode.
 - **Bookmarks** — Pin frequently accessed remote paths for instant navigation.
 - **Server Overview** — Live bento-style dashboard showing CPU, memory, disk, load, uptime, and OS info.
 - **Theme toggle** — Switch between dark and light themes instantly.
 - **Responsive design** — Fully usable on mobile viewports with a collapsible rail and bottom navigation bar.
-- **Settings** — Per-server OTP configuration and application-level auth management.
+- **Settings** — Switch the global authentication flow (OTP vs legacy) and manage the application-level login password.
 
 ---
 
@@ -42,6 +43,8 @@ graph LR
 - **Express → SSH**: The `ssh2` library manages connections, SFTP channels, and PTY allocation.
 - **SQLite**: Stores server configurations (encrypted credentials), saved commands, and bookmarked file paths via `better-sqlite3`.
 - **Encryption**: Credentials are encrypted with AES-256-GCM before being written to the database.
+
+**In OTP mode**, the path to the server differs: REConnect tunnels through the local **zero-trust agent** (`0Agent → ServiceEdge → AppConnector → ZAC-signed cert → target`) instead of connecting directly, and multiplexes terminal + files + system-info over a **single interactive shell** (the gateway refuses extra channels and the SFTP/exec subsystems). See [Authentication & Zero-Trust Flow](#authentication--zero-trust-flow).
 
 ---
 
@@ -161,8 +164,10 @@ To **edit** an existing server, hover its row and click the pencil icon — the 
 | ![Settings modal](screenshots/05-settings.png) | ![Settings modal mobile](screenshots/05-settings-mobile.png) |
 
 Open Settings via the **⚙** icon in the rail. From here you can:
-- Switch the global authentication mode between **Legacy (password)** and **OTP** for all new servers.
+- Switch the global authentication flow between **OTP (default)** and **Legacy (password/key)**. **OTP is the recommended default; legacy is a fallback that is being phased out and will be removed in a future release.** Changing the flow drops pooled sessions so each server re-authenticates under the new flow.
 - Manage the application-level login password (`APP_PASSWORD`).
+
+See [Authentication & Zero-Trust Flow](#authentication--zero-trust-flow) for how OTP works and what it changes about the Terminal and Files tabs.
 
 ---
 
@@ -206,11 +211,10 @@ Stats refresh automatically on connection; no manual polling needed.
 |---------|--------|
 | ![Terminal connected](screenshots/08-terminal-connected.png) | ![Terminal connected mobile](screenshots/08-terminal-connected-mobile.png) |
 
-The **Terminal** tab opens a full PTY session via WebSocket once connected. Features:
-- Colour rendering, cursor control, and scrollback buffer.
-- Automatic resize when the panel size changes.
-- Keyboard shortcuts pass through to the remote shell (Ctrl-C, Ctrl-Z, tab completion, etc.).
-- Right-click context menu for copy/paste.
+The **Terminal** tab behaves differently depending on the auth flow:
+
+- **Legacy mode** — a full PTY session via WebSocket: colour rendering, cursor control, scrollback, automatic resize, and full keyboard pass-through (Ctrl-C, Ctrl-Z, tab completion, etc.).
+- **OTP mode** — a **command console**: type a command and press Enter, see its output, with command history (↑/↓), a working-directory-aware prompt, and Ctrl-C to cancel. Because the zero-trust gateway grants only one interactive shell per login, there is no live PTY here — full-screen programs (`vim`, `htop`, `less`) won't render. Use a real `ssh` session for those. (See [Authentication & Zero-Trust Flow](#authentication--zero-trust-flow).)
 
 #### Running a Command
 
@@ -252,11 +256,13 @@ The output panel is also used for streaming ad-hoc command results via Server-Se
 |---------|--------|
 | ![Files tree at /tmp/](screenshots/12-files-tree.png) | ![Files tree mobile](screenshots/12-files-tree-mobile.png) |
 
-The **Files** tab shows a tree-style directory listing of the remote server via SFTP. Navigate by:
+The **Files** tab shows a tree-style directory listing of the remote server. Navigate by:
 - Clicking any **folder** row to expand/collapse it.
 - Using the **breadcrumb bar** at the top to jump to any ancestor directory.
 - Clicking the **pencil icon** next to the path to type a path directly and press Enter to navigate there.
 - Clicking the **🔄 refresh** button to re-fetch the current directory.
+
+> **Auth flow note:** In **legacy mode** the listing and all file operations use **SFTP**. In **OTP mode** the zero-trust gateway blocks the SFTP subsystem, so REConnect performs the same operations (list, read, edit/save, upload, delete) by running shell commands over the single interactive shell, moving file contents as **base64**. The experience is the same; very large or binary transfers are slower than SFTP. When not connected, the tab shows a **Connect** button instead of an error.
 
 ---
 
@@ -359,6 +365,68 @@ All mobile screenshots in this document were captured at 390 × 844 px with a Mo
 | Network exposure | Server binds to `127.0.0.1` by default — not reachable from other machines unless you explicitly change `HOST`. |
 | Session management | Sessions are signed with a random key; tampering with the cookie invalidates it immediately. |
 | SFTP operations | File reads and writes go through the SSH connection — no additional ports need to be opened. |
+| Zero-trust (OTP) | In OTP mode there is **no stored credential** — access is gated per-login by an emailed one-time passcode through the ZAC zero-trust path, and traffic is restricted to a single interactive shell with SFTP/SCP/port-forwarding blocked at the gateway. |
+
+---
+
+## Authentication & Zero-Trust Flow
+
+REConnect supports two authentication flows. **OTP is the default and recommended flow; the legacy password/key flow is a fallback that is being phased out and will be removed in a future release.** Switch the global flow in **Settings (⚙)**.
+
+### Why OTP is different
+
+The organization's SSH access is **password-less and certificate-based** through a zero-trust gateway (ZAC). You never store or type a server password — an **emailed one-time passcode (OTP)** authorizes each login, and a short-lived ZAC-signed SSH certificate (never leaving the gateway) connects you to the target.
+
+```mermaid
+flowchart LR
+  subgraph User["Your machine (any network)"]
+    C["SSH client / REConnect"] --> A["0Agent<br/>(intercepts SSH)"]
+  end
+  A -->|tunnel| SE["ServiceEdge"]
+  SE -->|route by dest + policy| AC["AppConnector<br/>(dept scoping + OTP)"]
+  AC -->|CSR| ZAC["ZAC<br/>(signs SSH cert)"]
+  ZAC -->|short-lived cert| AC
+  AC -->|cert auth| T[("Target SSH server")]
+```
+
+**Connection flow (what you experience):**
+
+1. You click **Connect**; the SSH session is intercepted by **0Agent** and tunnelled via **ServiceEdge** to the **AppConnector** in the target DC.
+2. The AppConnector enforces **department/access policy**, then issues an **OTP prompt** (REConnect shows a passcode modal).
+3. You enter the OTP from your **Zoho email**. The AppConnector obtains a ZAC-signed certificate and opens a certificate-authenticated session to the target server.
+4. All your SSH traffic is proxied through this tunnel.
+
+**The gateway restricts the session** — these SSH features are blocked at the zero layer (even if enabled on the target): **SFTP, SCP, port forwarding, Unix-socket forwarding, X11 forwarding, agent forwarding**. Only an **interactive shell** is allowed, and the gateway grants **one session channel per login**.
+
+### What that changes in REConnect (OTP mode)
+
+| Capability | Legacy mode | OTP mode |
+|---|---|---|
+| Connect | Direct, stored password/key | Tunnel + emailed OTP (no stored credential) |
+| Terminal | Live PTY (xterm) — vim/htop work | **Command console** (run → output); no full-screen TUIs in-app |
+| Files / editor | SFTP | Shell commands + **base64** over the one shell |
+| System info | `exec` channel | Same script run over the shell |
+| Channels | Many (multiplexed) | **One shared interactive shell** |
+
+For the engineering detail of how files + commands are multiplexed over a single shell, see **[OTP vs Password Access](OTP_VS_PASSWORD_ACCESS.md)**.
+
+### Prerequisites for OTP access
+
+1. **Policy / ZService access** — You need Localzoho DC policy access. If you don't have it, raise a request in the **PAM support channel**, or have your team DRI email **`pam-support@zohocorp.com`** (CC your manager) with: your **email**, **ZService name(s)**, and **department**. Wait for approval.
+2. **0Agent network** — Set the default network to the appropriate zero-host (e.g. *CT1 Localzoho Network*) and **reload policies** in 0Agent. Revert to *none* when you're done.
+3. **Verify first in a plain terminal** — `ssh sas@<server-ip>` should prompt for an OTP. If that works, REConnect's OTP mode will too.
+
+### Common issue — "Host key verification failed"
+
+If SSH refuses to connect because the server's host key changed, remove the stale entry and reconnect:
+
+```bash
+ssh-keygen -R <server-ip>
+# Host <server-ip> found: line N
+# known_hosts updated.
+```
+
+This only removes that one server's old key; other saved hosts are unaffected.
 
 ---
 

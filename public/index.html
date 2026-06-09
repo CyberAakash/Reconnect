@@ -441,6 +441,26 @@
   </div>
 </div>
 
+<!-- Prompt (text input) dialog -->
+<div class="rt-overlay" id="prompt-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="prompt-title">
+  <div class="rt-modal" id="prompt-box">
+    <div class="rt-modal-head">
+      <h2 id="prompt-title"></h2>
+      <button class="rt-icon-btn" id="prompt-close" aria-label="Close"><!-- close --></button>
+    </div>
+    <div class="rt-modal-body">
+      <div class="rt-field">
+        <label class="rt-label" id="prompt-label" for="prompt-input"></label>
+        <input class="rt-input" id="prompt-input" type="text" autocomplete="off" spellcheck="false" />
+      </div>
+    </div>
+    <div class="rt-modal-foot">
+      <button class="rt-btn ghost" id="prompt-cancel">Cancel</button>
+      <button class="rt-btn primary" id="prompt-ok">OK</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="rt-toast" id="toast" style="display:none" role="status">
   <span class="ico" id="toast-ico"></span>
