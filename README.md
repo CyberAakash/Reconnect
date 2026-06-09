@@ -17,11 +17,12 @@ A lightweight, self-hosted web app to manage remote servers over SSH — all fro
 ## Features
 
 - Browser-based SSH manager — no native SSH client needed
+- **OTP / zero-trust auth (default)** — passcode-per-login via the org's ZAC zero-trust gateway. Legacy password/key auth is still available as a fallback but is being phased out. See [Authentication](#authentication).
 - Multiple saved servers with credentials encrypted at rest (AES-256)
-- Interactive terminal via xterm.js over a WebSocket PTY
+- Interactive terminal — a live xterm PTY in legacy mode; a command console in OTP mode (the zero-trust gateway allows one interactive shell per login)
 - Reusable saved commands + ad-hoc commands with live streaming output
-- Remote file browser + editor (Monaco) with save-back over SFTP
-- SFTP file uploads to any remote path
+- Remote file browser + editor (Monaco) with save-back — over SFTP in legacy mode, or tunnelled through the single shell (base64) in OTP mode
+- File uploads to any remote path
 - Bookmarked files for fast access to frequently edited remote files
 - Server overview with live system stats and connection status pill
 - Dark / light theme with self-hosted fonts
@@ -148,10 +149,39 @@ PM2 keeps Reconnect running in the background and restarts it automatically afte
 ### Adding a Server
 
 1. Click the **+** button in the sidebar.
-2. Fill in the server label, IP/hostname, port, username, and either a password or path to an SSH private key.
+2. Fill in the server label, IP/hostname, port, and username.
+   - In **OTP mode** (the default) no stored credential is needed — you authenticate with a one-time passcode at connect time.
+   - In **legacy mode** also provide a password or a path to an SSH private key.
 3. Click **Save**.
 
-The server appears in the sidebar. Click it to open its dashboard.
+The server appears in the sidebar. Click it to open its dashboard, then **Connect**.
+
+---
+
+## Authentication
+
+REConnect supports two authentication flows. **OTP is the default and recommended flow; legacy password/key auth is a fallback that is being phased out and will be removed in a future release.** You can switch flows globally in **Settings (⚙)**.
+
+### OTP / Zero-Trust (default)
+
+The organization's SSH access goes through a **ZAC certificate-based, password-less zero-trust** path. You never type a server password — a **one-time passcode (OTP)** sent to your Zoho email authorizes the session:
+
+1. You click **Connect**; REConnect initiates the SSH session through the local zero-trust agent (0Agent → ServiceEdge → AppConnector).
+2. The AppConnector enforces department/access policy, then prompts for an **OTP** (REConnect shows a passcode modal).
+3. Enter the OTP from your email. On success the AppConnector obtains a short-lived ZAC-signed certificate and connects you to the target server.
+
+Because the zero-trust gateway grants **one interactive shell per login and blocks SFTP/SCP/exec/port-forwarding** at the network layer, REConnect's OTP mode:
+- presents the Terminal as a **command console** (run a command, see output) rather than a live PTY — use a real `ssh` session for full-screen tools like `vim`/`htop`;
+- powers the **file browser, editor, uploads and system info over that single shell** (file contents move as base64). It works transparently; large/binary transfers are slower than SFTP.
+
+**Prerequisites for OTP access**
+- You must have **Localzoho DC policy / ZService access**. If you don't, raise a request in the PAM support channel (or have your team DRI email `pam-support@zohocorp.com`, CC your manager) with your **email, ZService name(s), and department**. Wait for approval.
+- In **0Agent**, set the default network to the appropriate zero-host (e.g. *CT1 Localzoho Network*) and **reload policies**; revert to *none* when done.
+- Verify with a plain terminal first: `ssh sas@<server-ip>` should prompt for an OTP.
+
+### Legacy (password / key)
+
+For non-zero-trust hosts (or until OTP rollout completes), switch to **Legacy** in Settings and store a password or private key per server. Legacy mode gives a full live PTY terminal and native SFTP. This flow is deprecated.
 
 ### Running Commands
 
@@ -372,6 +402,10 @@ On the **free tier** (no disk): remove the `disk:` block from `render.yaml`. The
 | Port 9898 already in use | Kill the existing process: `lsof -ti:9898 \| xargs kill` then restart |
 | SSH connection fails | Verify the server IP, port, username, and credentials. Use **Test Connection** from the UI. |
 | Permission denied on SSH key | Ensure the key file has correct permissions: `chmod 600 ~/.ssh/id_rsa` |
+| OTP connect fails / "All configured authentication methods failed" | Confirm OTP access is approved (PAM/ZService) and 0Agent is on the right zero-host with policies reloaded. Verify `ssh sas@<ip>` prompts for an OTP in a plain terminal. |
+| OTP times out before you enter it | REConnect auto-requests a fresh passcode (up to 3 tries). Just enter the latest OTP from your email. |
+| `Host key verification failed` | The server's key changed. Remove the stale entry and reconnect: `ssh-keygen -R <server-ip>` (this affects only that host). |
+| Terminal won't run `vim`/`htop` in OTP mode | Expected — OTP mode is a command console (one shell, no live PTY). Use a real `ssh` session for full-screen programs. |
 
 ---
 
