@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
+const net = require('net');
 const { Client } = require('ssh2');
 const multer = require('multer');
 const fs = require('fs');
@@ -146,11 +147,21 @@ function sshConfig(server, mode) {
     host: server.host,
     port: server.port,
     username: server.username,
+    // Keep idle sessions alive (the zero-trust gateway/NAT drops silent
+    // connections). Ping every 15s; give up after ~2 min of no reply.
+    keepaliveInterval: 15000,
+    keepaliveCountMax: 8,
   };
   if (mode === 'otp') {
-    // Use system SSH agent (0Agent / ZAC cert) + allow keyboard-interactive for OTP
-    if (process.env.SSH_AUTH_SOCK) config.agent = process.env.SSH_AUTH_SOCK;
+    // Org OTP flow: server authenticates via a single one-time passcode over
+    // keyboard-interactive. Force ssh2 straight to it — no agent/publickey/
+    // password attempts to muddy the negotiation (the agent has no identities,
+    // and a dead publickey attempt makes ssh2 report "all methods failed"
+    // before it ever reaches the OTP prompt).
     config.tryKeyboard = true;
+    config.authHandler = ['keyboard-interactive'];
+    // Give the user time to receive the OTP email and type it (default is 20s).
+    config.readyTimeout = 120000;
   } else if (server.auth_type === 'key') {
     config.privateKey = fs.readFileSync(server.key_path, 'utf8');
   } else {
@@ -158,6 +169,224 @@ function sshConfig(server, mode) {
     config.tryKeyboard = true;
   }
   return config;
+}
+
+// ── Zero-trust egress proxy ──
+// Internal hosts (e.g. the OTP/zero-trust gateway) only resolve correctly when
+// reached THROUGH the local zero-trust agent's HTTP CONNECT proxy. Connecting
+// directly hits a different machine on the same overlay IP and auth fails.
+// Mirrors the system ~/.ssh/config managed by 0Helper:
+//   ProxyCommand /usr/bin/nc -X connect -x 127.0.0.1:3128 %h %p
+const SSH_PROXY = process.env.RECONNECT_SSH_PROXY || '127.0.0.1:3128';
+
+// Open an HTTP CONNECT tunnel through SSH_PROXY to targetHost:targetPort and
+// resolve with the tunneled socket, ready to hand to ssh2 as config.sock.
+function connectViaProxy(targetHost, targetPort) {
+  const sep = SSH_PROXY.lastIndexOf(':');
+  const proxyHost = sep === -1 ? SSH_PROXY : SSH_PROXY.slice(0, sep);
+  const proxyPort = sep === -1 ? 3128 : Number(SSH_PROXY.slice(sep + 1));
+
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(proxyPort, proxyHost);
+    let chunks = [];
+    let settled = false;
+
+    const cleanup = () => {
+      sock.removeListener('data', onData);
+      sock.removeListener('error', onErr);
+      sock.setTimeout(0);
+    };
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      sock.destroy();
+      reject(err);
+    };
+    const onErr = (e) => fail(e);
+    const onData = (chunk) => {
+      chunks.push(chunk);
+      const buf = Buffer.concat(chunks);
+      const headerEnd = buf.indexOf('\r\n\r\n');
+      if (headerEnd === -1) return; // wait for full CONNECT response header
+      const statusLine = buf.slice(0, buf.indexOf('\r\n')).toString('latin1');
+      const m = statusLine.match(/^HTTP\/\d(?:\.\d)?\s+(\d{3})/);
+      if (!m || m[1] !== '200') {
+        return fail(new Error(`zero-trust proxy refused CONNECT (${statusLine || 'no response'})`));
+      }
+      settled = true;
+      cleanup();
+      // Bytes after the header already belong to the SSH stream (server banner);
+      // push them back so ssh2 reads them.
+      const leftover = buf.slice(headerEnd + 4);
+      if (leftover.length) sock.unshift(leftover);
+      resolve(sock);
+    };
+
+    sock.setTimeout(15000, () => fail(new Error(`zero-trust proxy ${proxyHost}:${proxyPort} timed out`)));
+    sock.once('error', onErr);
+    sock.on('data', onData);
+    sock.once('connect', () => {
+      sock.write(`CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`);
+    });
+  });
+}
+
+// ════════════════════════════════════════
+//  REMOTE SHELL (RPC over a single PTY shell)
+// ════════════════════════════════════════
+//
+// The zero-trust OTP gateway allows exactly ONE session channel per login, and
+// only an interactive shell (no exec, no sftp). So in OTP mode we open that one
+// shell once and drive it as a command/response RPC channel: every operation is
+// a shell command whose output is captured up to a unique sentinel marker. File
+// contents move as base64 to stay binary-safe.
+
+// POSIX single-quote a string for safe interpolation into a shell command.
+function shq(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
+const RPC_DEFAULT_TIMEOUT_MS = 30000;
+const RPC_MAX_OUTPUT = 12 * 1024 * 1024; // 12 MB guard per command
+const FILE_READ_CAP = 8 * 1024 * 1024;   // 8 MB cap for file reads/downloads
+
+class RemoteShell {
+  constructor(stream, marker) {
+    this.stream = stream;
+    this.marker = marker;
+    this.buf = '';
+    this.queue = Promise.resolve(); // serializes run() calls
+    this.closed = false;
+    this.endRe = new RegExp(`${marker}:(\\-?\\d+):EOF`);
+
+    stream.on('close', () => { this.closed = true; });
+    stream.stderr && stream.stderr.on('data', () => {}); // PTY merges stderr; drain just in case
+  }
+
+  // Swallow the login banner/MOTD and put the shell into a clean, quiet state.
+  init() {
+    return new Promise((resolve, reject) => {
+      const readyTok = `${this.marker}:READY`;
+      let acc = '';
+      const onData = (chunk) => {
+        acc += chunk.toString('utf8');
+        if (acc.includes(readyTok)) {
+          this.stream.removeListener('data', onData);
+          this.buf = '';
+          resolve();
+        }
+      };
+      this.stream.on('data', onData);
+      const t = setTimeout(() => {
+        this.stream.removeListener('data', onData);
+        reject(new Error('RemoteShell init timed out'));
+      }, RPC_DEFAULT_TIMEOUT_MS);
+      t.unref && t.unref();
+      // Quiet the shell: no echo, no prompt, no prompt-command noise.
+      // The PTY echoes this command line back before `stty -echo` takes effect,
+      // so emit the ready token in two pieces (`…:RE` + `ADY`) — the echoed
+      // command never contains the full token, so we only match the real output.
+      const a = shq(`${this.marker}:RE`);
+      const b = shq('ADY');
+      this.stream.write(
+        `stty -echo 2>/dev/null; export PS1=''; export PS2=''; export PROMPT_COMMAND=''; ` +
+        `unset HISTFILE; printf '%s%s\\n' ${a} ${b}\n`
+      );
+    });
+  }
+
+  // Run a command; resolve { stdout, code }. Serialized so only one runs at a time.
+  run(command, { timeout = RPC_DEFAULT_TIMEOUT_MS } = {}) {
+    this.queue = this.queue.then(() => this._exec(command, timeout));
+    return this.queue;
+  }
+
+  _exec(command, timeout) {
+    return new Promise((resolve, reject) => {
+      if (this.closed) return reject(new Error('RemoteShell channel closed'));
+      const onData = (chunk) => {
+        this.buf += chunk.toString('utf8');
+        if (this.buf.length > RPC_MAX_OUTPUT) {
+          cleanup();
+          return reject(new Error('command output exceeded limit'));
+        }
+        const m = this.buf.match(this.endRe);
+        if (m) {
+          cleanup();
+          const code = parseInt(m[1], 10);
+          // PTY output maps \n → \r\n; strip the \r so parsing/filenames stay clean.
+          let stdout = this.buf.slice(0, m.index).replace(/\r/g, '');
+          // Drop the newline we injected just before the marker.
+          if (stdout.endsWith('\n')) stdout = stdout.slice(0, -1);
+          this.buf = '';
+          resolve({ stdout, code });
+        }
+      };
+      const onClose = () => { cleanup(); reject(new Error('RemoteShell channel closed mid-command')); };
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.stream.removeListener('data', onData);
+        this.stream.removeListener('close', onClose);
+      };
+      const timer = setTimeout(() => { cleanup(); reject(new Error('command timed out')); }, timeout);
+      timer.unref && timer.unref();
+
+      this.buf = '';
+      this.stream.on('data', onData);
+      this.stream.on('close', onClose);
+      // Run the command, then emit the marker + exit code. No leading newline:
+      // the marker regex matches anywhere, and an injected \n would double up
+      // with the command's own trailing newline.
+      this.stream.write(`${command}\nprintf '%s:%s:EOF\\n' ${shq(this.marker)} "$?"\n`);
+    });
+  }
+
+  // ── File/info helpers (all over run()) ──
+
+  async list(dir) {
+    const d = dir || '.';
+    // GNU find -printf: type<TAB>size<TAB>mtime<TAB>name
+    const { stdout, code } = await this.run(
+      `find ${shq(d)} -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%TY-%Tm-%Td %TH:%TM\\t%f\\n' 2>&1`
+    );
+    if (code !== 0) throw new Error(stdout.trim() || `cannot list ${d}`);
+    const entries = stdout.split('\n').filter(Boolean).map(line => {
+      const [type, size, mtime, ...nameParts] = line.split('\t');
+      const name = nameParts.join('\t');
+      return { name, isDir: type === 'd', size: Number(size) || 0, mtime };
+    }).filter(e => e.name);
+    entries.sort((a, b) => (a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name)));
+    return { path: d, entries };
+  }
+
+  async readFile(remotePath) {
+    const sz = await this.run(`stat -c %s -- ${shq(remotePath)} 2>&1`);
+    if (sz.code !== 0) throw new Error(sz.stdout.trim() || `cannot stat ${remotePath}`);
+    const size = Number(sz.stdout.trim());
+    if (Number.isFinite(size) && size > FILE_READ_CAP) {
+      throw new Error(`file too large (${size} bytes; cap ${FILE_READ_CAP})`);
+    }
+    const { stdout, code } = await this.run(`base64 -w0 -- ${shq(remotePath)} 2>&1`, { timeout: 60000 });
+    if (code !== 0) throw new Error(stdout.trim() || `cannot read ${remotePath}`);
+    return Buffer.from(stdout.replace(/\s/g, ''), 'base64');
+  }
+
+  async writeFile(remotePath, buf) {
+    // Wrap base64 at 1000 chars/line: PTY canonical-mode input caps line length
+    // (~4096 bytes), and `base64 -d` ignores the newlines on the way back in.
+    const b64 = Buffer.from(buf).toString('base64').replace(/(.{1000})/g, '$1\n');
+    const heredoc = `B64_${this.marker}`;
+    // Stream base64 in via a quoted heredoc so arbitrary content can't break out.
+    const cmd = `base64 -d > ${shq(remotePath)} <<'${heredoc}'\n${b64}\n${heredoc}`;
+    const { stdout, code } = await this.run(cmd, { timeout: 60000 });
+    if (code !== 0) throw new Error(stdout.trim() || `cannot write ${remotePath}`);
+  }
+
+  async deletePath(remotePath) {
+    const { stdout, code } = await this.run(`rm -rf -- ${shq(remotePath)} 2>&1`);
+    if (code !== 0) throw new Error(stdout.trim() || `cannot delete ${remotePath}`);
+  }
 }
 
 // ════════════════════════════════════════
@@ -294,6 +523,20 @@ async function acquire(id) {
   return ensureSession(id);
 }
 
+/**
+ * OTP mode: return the ready RemoteShell RPC channel, or throw NOT_CONNECTED.
+ */
+function acquireRpc(id) {
+  const s = sessions.get(id);
+  if (s && s.status === 'ready' && s.rpc) {
+    resetIdle(id);
+    return s.rpc;
+  }
+  const err = new Error('NOT_CONNECTED');
+  err.code = 'NOT_CONNECTED';
+  throw err;
+}
+
 // ════════════════════════════════════════
 //  SERVER CRUD
 // ════════════════════════════════════════
@@ -379,14 +622,16 @@ app.get('/api/servers/:id/connect', (req, res) => {
     otpFinish: null,
     idleTimer: null,
     connectResolvers: [],
+    rpc: null,
   };
   sessions.set(id, session);
 
   if (mode === 'otp') {
     conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
+      if (prompts.length === 0) { finish([]); return; }   // info-only round
       session.status = 'awaiting_otp';
       session.otpFinish = finish;
-      const promptText = prompts.length > 0 ? prompts[0].prompt : 'OTP:';
+      const promptText = prompts[0].prompt || 'OTP:';
       sse('prompt', { prompt: promptText });
     });
   } else if (server.auth_type !== 'key') {
@@ -396,14 +641,44 @@ app.get('/api/servers/:id/connect', (req, res) => {
   }
 
   conn.on('ready', () => {
-    session.status = 'ready';
     session.otpFinish = null;
+    if (mode === 'otp') {
+      // The gateway grants only ONE channel and only an interactive shell, so
+      // open that single shell now and drive it as an RPC channel for the whole
+      // session (file ops, sysinfo, command console all flow through it).
+      conn.shell({ term: 'dumb' }, (err, stream) => {
+        if (err) {
+          console.error(`[ssh] shell open failed for server ${id}: ${err.message}`);
+          sse('error', { message: `Shell channel failed: ${err.message}` });
+          clearSession(id);
+          res.end();
+          return;
+        }
+        const marker = 'RT_' + crypto.randomBytes(8).toString('hex');
+        const rpc = new RemoteShell(stream, marker);
+        rpc.init().then(() => {
+          session.rpc = rpc;
+          session.status = 'ready';
+          session.idleTimer = setTimeout(() => clearSession(id), IDLE_TIMEOUT_MS);
+          sse('connected', { serverId: id });
+          res.end();
+        }).catch((e) => {
+          console.error(`[ssh] RemoteShell init failed for server ${id}: ${e.message}`);
+          sse('error', { message: `Session init failed: ${e.message}` });
+          clearSession(id);
+          res.end();
+        });
+      });
+      return;
+    }
+    session.status = 'ready';
     session.idleTimer = setTimeout(() => clearSession(id), IDLE_TIMEOUT_MS);
     sse('connected', { serverId: id });
     res.end();
   });
 
   conn.on('error', (err) => {
+    console.error(`[ssh] connect error for server ${id} (${server.host}) [mode=${mode}]: level=${err.level || 'n/a'} message=${err.message}`);
     sse('error', { message: err.message });
     sessions.delete(id);
     res.end();
@@ -413,7 +688,20 @@ app.get('/api/servers/:id/connect', (req, res) => {
     if (sessions.get(id) === session) sessions.delete(id);
   });
 
-  conn.connect(sshConfig(server, mode));
+  const config = sshConfig(server, mode);
+  if (mode === 'otp') {
+    // Tunnel through the zero-trust proxy — the gateway is only reachable via it.
+    connectViaProxy(server.host, server.port || 22)
+      .then((sock) => { config.sock = sock; conn.connect(config); })
+      .catch((err) => {
+        console.error(`[ssh] proxy tunnel failed for server ${id} (${server.host}): ${err.message}`);
+        sse('error', { message: `Zero-trust proxy tunnel failed: ${err.message}` });
+        sessions.delete(id);
+        res.end();
+      });
+  } else {
+    conn.connect(config);
+  }
 
   req.on('close', () => {
     // If SSE dropped before ready, clean up
@@ -515,6 +803,26 @@ app.get('/api/servers/:id/exec', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
+  // OTP mode: the gateway refuses exec channels — run via the shared shell RPC.
+  if (getAuthMode() === 'otp') {
+    let rpc;
+    try { rpc = acquireRpc(id); }
+    catch (err) {
+      res.write(`data: ${JSON.stringify({ type: 'error', data: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message })}\n\n`);
+      res.end();
+      return;
+    }
+    try {
+      const { stdout, code } = await rpc.run(cmd, { timeout: 120000 });
+      if (stdout) res.write(`data: ${JSON.stringify({ type: 'stdout', data: stdout })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'exit', code })}\n\n`);
+    } catch (e) {
+      res.write(`data: ${JSON.stringify({ type: 'error', data: e.message })}\n\n`);
+    }
+    res.end();
+    return;
+  }
+
   let conn;
   try {
     conn = await acquire(id);
@@ -549,42 +857,52 @@ app.get('/api/servers/:id/exec', async (req, res) => {
 //  SYSTEM INFO — pooled
 // ════════════════════════════════════════
 
+function parseSysInfo(out) {
+  const info = {};
+  out.split('\n').forEach(line => {
+    const i = line.indexOf('=');
+    if (i > 0) info[line.slice(0, i)] = line.slice(i + 1).trim();
+  });
+  return info;
+}
+
+const SYSINFO_SCRIPT = [
+  'echo "HOST=$(hostname 2>/dev/null)"',
+  '. /etc/os-release 2>/dev/null; echo "OS=${PRETTY_NAME:-$(uname -s)}"',
+  'echo "KERNEL=$(uname -r)"',
+  'echo "ARCH=$(uname -m)"',
+  'echo "UPTIME=$(uptime -p 2>/dev/null || uptime)"',
+  'echo "CPUS=$(nproc 2>/dev/null)"',
+  'echo "LOAD=$(awk \'{print $1,$2,$3}\' /proc/loadavg 2>/dev/null)"',
+  'MU=$(free -m 2>/dev/null | grep "^Mem:" | awk "{print \\$3}"); MT=$(free -m 2>/dev/null | grep "^Mem:" | awk "{print \\$2}"); echo "MEM=${MU}/${MT}"',
+  'DU=$(df -h / 2>/dev/null | tail -1 | awk "{print \\$3}"); DT=$(df -h / 2>/dev/null | tail -1 | awk "{print \\$2}"); DP=$(df -h / 2>/dev/null | tail -1 | awk "{print \\$5}"); echo "DISK=${DU}/${DT} (${DP})"',
+].join('; ');
+
 app.get('/api/servers/:id/sysinfo', async (req, res) => {
   const id = +req.params.id;
+
+  if (getAuthMode() === 'otp') {
+    let rpc;
+    try { rpc = acquireRpc(id); }
+    catch (err) { return res.status(409).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED' : err.message }); }
+    try {
+      const { stdout } = await rpc.run(SYSINFO_SCRIPT);
+      return res.json(parseSysInfo(stdout));
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+
   let conn;
   try { conn = await acquire(id); }
   catch (err) {
     return res.status(409).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED' : err.message });
   }
 
-  // Build script using an array joined with semicolons
-  // Avoid complex shell quoting — use separate echo assignments
-  const scriptParts = [
-    'echo "HOST=$(hostname 2>/dev/null)"',
-    '. /etc/os-release 2>/dev/null; echo "OS=${PRETTY_NAME:-$(uname -s)}"',
-    'echo "KERNEL=$(uname -r)"',
-    'echo "ARCH=$(uname -m)"',
-    'echo "UPTIME=$(uptime -p 2>/dev/null || uptime)"',
-    'echo "CPUS=$(nproc 2>/dev/null)"',
-    'echo "LOAD=$(awk \'{print $1,$2,$3}\' /proc/loadavg 2>/dev/null)"',
-    'MU=$(free -m 2>/dev/null | grep "^Mem:" | awk "{print \\$3}"); MT=$(free -m 2>/dev/null | grep "^Mem:" | awk "{print \\$2}"); echo "MEM=${MU}/${MT}"',
-    'DU=$(df -h / 2>/dev/null | tail -1 | awk "{print \\$3}"); DT=$(df -h / 2>/dev/null | tail -1 | awk "{print \\$2}"); DP=$(df -h / 2>/dev/null | tail -1 | awk "{print \\$5}"); echo "DISK=${DU}/${DT} (${DP})"',
-  ];
-  const script = scriptParts.join('; ');
-
-  conn.exec(script, (err, stream) => {
+  conn.exec(SYSINFO_SCRIPT, (err, stream) => {
     if (err) return res.status(500).json({ error: err.message });
     let out = '';
     stream.on('data', d => { out += d.toString(); });
     stream.stderr.on('data', () => {}); // drain stderr
-    stream.on('close', () => {
-      const info = {};
-      out.split('\n').forEach(line => {
-        const i = line.indexOf('=');
-        if (i > 0) info[line.slice(0, i)] = line.slice(i + 1).trim();
-      });
-      res.json(info);
-    });
+    stream.on('close', () => { res.json(parseSysInfo(out)); });
   });
 });
 
@@ -600,6 +918,25 @@ app.post('/api/servers/:id/upload', upload.single('file'), async (req, res) => {
 
   const remotePath = req.body.remotePath;
   const localPath = req.file.path;
+
+  // OTP mode: gateway refuses sftp — write via the shared shell (base64).
+  if (getAuthMode() === 'otp') {
+    let rpc;
+    try { rpc = acquireRpc(id); }
+    catch (err) {
+      fs.unlink(localPath, () => {});
+      return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message });
+    }
+    try {
+      const buf = fs.readFileSync(localPath);
+      await rpc.writeFile(remotePath, buf);
+      fs.unlink(localPath, () => {});
+      return res.json({ ok: true });
+    } catch (e) {
+      fs.unlink(localPath, () => {});
+      return res.status(500).json({ error: e.message });
+    }
+  }
 
   let conn;
   try {
@@ -625,6 +962,18 @@ app.post('/api/servers/:id/file/read', async (req, res) => {
   const server = db.prepare('SELECT * FROM servers WHERE id=?').get(id);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
+  const remotePath = req.body.path;
+
+  if (getAuthMode() === 'otp') {
+    let rpc;
+    try { rpc = acquireRpc(id); }
+    catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
+    try {
+      const buf = await rpc.readFile(remotePath);
+      return res.json({ content: buf.toString('utf8') });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+
   let conn;
   try {
     conn = await acquire(id);
@@ -632,7 +981,6 @@ app.post('/api/servers/:id/file/read', async (req, res) => {
     return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message });
   }
 
-  const remotePath = req.body.path;
   conn.sftp((err, sftp) => {
     if (err) return res.status(500).json({ error: err.message });
     let content = '';
@@ -650,6 +998,18 @@ app.post('/api/servers/:id/file/write', async (req, res) => {
   const server = db.prepare('SELECT * FROM servers WHERE id=?').get(id);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
+  const { path: remotePath, content } = req.body;
+
+  if (getAuthMode() === 'otp') {
+    let rpc;
+    try { rpc = acquireRpc(id); }
+    catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
+    try {
+      await rpc.writeFile(remotePath, Buffer.from(content ?? '', 'utf8'));
+      return res.json({ ok: true });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+
   let conn;
   try {
     conn = await acquire(id);
@@ -657,7 +1017,6 @@ app.post('/api/servers/:id/file/write', async (req, res) => {
     return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message });
   }
 
-  const { path: remotePath, content } = req.body;
   conn.sftp((err, sftp) => {
     if (err) return res.status(500).json({ error: err.message });
     const stream = sftp.createWriteStream(remotePath);
@@ -673,6 +1032,18 @@ app.post('/api/servers/:id/file/list', async (req, res) => {
   const server = db.prepare('SELECT * FROM servers WHERE id=?').get(id);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
+  const dirPath = req.body.path;
+
+  if (getAuthMode() === 'otp') {
+    let rpc;
+    try { rpc = acquireRpc(id); }
+    catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
+    try {
+      const result = await rpc.list(dirPath);
+      return res.json(result);
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+
   let conn;
   try {
     conn = await acquire(id);
@@ -680,7 +1051,6 @@ app.post('/api/servers/:id/file/list', async (req, res) => {
     return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message });
   }
 
-  const dirPath = req.body.path;
   conn.sftp((err, sftp) => {
     if (err) return res.status(500).json({ error: err.message });
     sftp.readdir(dirPath, (e, list) => {
@@ -707,6 +1077,18 @@ app.post('/api/servers/:id/file/delete', async (req, res) => {
   const server = db.prepare('SELECT * FROM servers WHERE id=?').get(id);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
+  const filePath = req.body.path;
+
+  if (getAuthMode() === 'otp') {
+    let rpc;
+    try { rpc = acquireRpc(id); }
+    catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
+    try {
+      await rpc.deletePath(filePath);
+      return res.json({ ok: true });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+
   let conn;
   try {
     conn = await acquire(id);
@@ -714,7 +1096,6 @@ app.post('/api/servers/:id/file/delete', async (req, res) => {
     return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message });
   }
 
-  const filePath = req.body.path;
   conn.sftp((err, sftp) => {
     if (err) return res.status(500).json({ error: err.message });
     sftp.unlink(filePath, (e) => {
@@ -858,6 +1239,14 @@ wss.on('connection', async (ws, req) => {
   const match = req.url.match(/^\/api\/servers\/(\d+)\/shell/);
   if (!match) { ws.close(1008, 'Invalid path'); return; }
   const id = +match[1];
+
+  // OTP mode: the single allowed channel is owned by the RPC shell, so a live
+  // PTY isn't available — the UI uses the command console instead.
+  if (getAuthMode() === 'otp') {
+    ws.send(JSON.stringify({ type: 'error', message: 'Live terminal is unavailable over the zero-trust gateway. Use the command console.' }));
+    ws.close();
+    return;
+  }
 
   let conn;
   try {
