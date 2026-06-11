@@ -1,6 +1,65 @@
 import { STATE } from '../state.js';
 import { icon } from '../icons.js';
 import { esc, api } from '../api.js';
+import { toast } from './toast.js';
+
+// Injected to avoid circular dep (overview -> loadServers -> sidebar -> ...)
+let _loadServers;
+export function _setOverviewDeps(loadServers) {
+  _loadServers = loadServers;
+}
+
+// Reflect the per-server transport + auth flow in the toolbar's inline toggles.
+// Method (Internal/External) is always shown; the auth flow (OTP/Password) only
+// applies to internal hosts and only when flow scope is 'standalone'.
+export function updateInlineControls(server) {
+  const methodSeg = document.getElementById('ov-method-seg');
+  const flowSeg   = document.getElementById('ov-flow-seg');
+  if (!methodSeg || !flowSeg) return;
+
+  const internal = server.connection_method !== 'external';
+  methodSeg.style.display = '';
+  document.getElementById('ov-method-internal').classList.toggle('active', internal);
+  document.getElementById('ov-method-internal').setAttribute('aria-pressed', internal);
+  document.getElementById('ov-method-external').classList.toggle('active', !internal);
+  document.getElementById('ov-method-external').setAttribute('aria-pressed', !internal);
+
+  if (!internal || STATE.authScope !== 'standalone') { flowSeg.style.display = 'none'; return; }
+  flowSeg.style.display = '';
+  const otp = server.auth_mode !== 'password';
+  document.getElementById('ov-flow-otp').classList.toggle('active', otp);
+  document.getElementById('ov-flow-otp').setAttribute('aria-pressed', otp);
+  document.getElementById('ov-flow-password').classList.toggle('active', !otp);
+  document.getElementById('ov-flow-password').setAttribute('aria-pressed', !otp);
+}
+
+async function _patchSelected(path, body, okMsg) {
+  const id = STATE.selectedId;
+  if (!id) return;
+  try {
+    await api(`/api/servers/${id}/${path}`, { method: 'PUT', body });
+    await _loadServers?.();
+    const fresh = STATE.servers.find(s => s.id === id);
+    if (fresh && STATE.centerTab === 'overview' && STATE.selectedId === id) renderOverview(fresh);
+    toast(okMsg);
+  } catch (e) {
+    toast('Failed: ' + e.message, 'error');
+  }
+}
+
+// Flip the selected server's auth flow (internal hosts only).
+export async function toggleServerFlow(mode) {
+  const server = STATE.servers.find(s => s.id === STATE.selectedId);
+  if (server && (server.auth_mode || 'otp') === mode) return; // no-op
+  await _patchSelected('auth-mode', { auth_mode: mode }, `Auth flow set to ${mode === 'otp' ? 'OTP' : 'Password'}`);
+}
+
+// Flip the selected server's transport.
+export async function toggleServerMethod(method) {
+  const server = STATE.servers.find(s => s.id === STATE.selectedId);
+  if (server && (server.connection_method || 'internal') === method) return; // no-op
+  await _patchSelected('connection-method', { connection_method: method }, `Connection set to ${method === 'internal' ? 'Internal' : 'External'}`);
+}
 
 function ringMeter(pct, size = 52) {
   const r = (size / 2) - 5;
@@ -26,6 +85,8 @@ export function renderOverview(server) {
 
   const nameEl = document.getElementById('bento-server-name');
   if (nameEl) nameEl.textContent = server.label;
+
+  updateInlineControls(server);
 
   const status = STATE.serverStatus[server.id] || 'disconnected';
   const isConnected = status === 'connected';

@@ -36,6 +36,11 @@ export async function openServerModalById(id = null) {
   const isKey = !server || server.auth_type !== 'password';
   setServerAuthType(isKey ? 'key' : 'password');
 
+  // Per-server transport: new servers default to Internal (zero-trust proxy).
+  setServerMethod(server?.connection_method === 'external' ? 'external' : 'internal');
+  // Per-server auth flow: new servers default to OTP.
+  setServerFlow(server?.auth_mode === 'password' ? 'password' : 'otp');
+
   ['sm-label-err', 'sm-host-err', 'sm-user-err', 'sm-port-err'].forEach(eid => {
     const el = document.getElementById(eid);
     if (el) el.style.display = 'none';
@@ -61,6 +66,24 @@ export function setServerAuthType(type) {
   document.getElementById('sm-pass-field').style.display = type === 'password' ? '' : 'none';
 }
 
+export function setServerFlow(mode) {
+  const otp = mode === 'otp';
+  document.getElementById('sm-flow-otp').classList.toggle('active', otp);
+  document.getElementById('sm-flow-password').classList.toggle('active', !otp);
+  document.getElementById('sm-flow-otp').setAttribute('aria-pressed', otp);
+  document.getElementById('sm-flow-password').setAttribute('aria-pressed', !otp);
+}
+
+export function setServerMethod(method) {
+  const internal = method !== 'external';
+  document.getElementById('sm-method-internal').classList.toggle('active', internal);
+  document.getElementById('sm-method-external').classList.toggle('active', !internal);
+  document.getElementById('sm-method-internal').setAttribute('aria-pressed', internal);
+  document.getElementById('sm-method-external').setAttribute('aria-pressed', !internal);
+  // The auth-flow choice (OTP vs Password) only applies to internal hosts.
+  document.getElementById('sm-flow-field').style.display = internal ? '' : 'none';
+}
+
 export async function saveServerById() {
   const saveBtn  = document.getElementById('sm-save');
   const label    = document.getElementById('sm-label').value.trim();
@@ -70,6 +93,8 @@ export async function saveServerById() {
   const authKey  = document.getElementById('sm-auth-key').classList.contains('active');
   const key_path = document.getElementById('sm-key').value.trim();
   const password = document.getElementById('sm-pass').value;
+  const connection_method = document.getElementById('sm-method-internal').classList.contains('active') ? 'internal' : 'external';
+  const auth_mode = document.getElementById('sm-flow-otp').classList.contains('active') ? 'otp' : 'password';
 
   let valid = true;
   [['sm-label-err', !label, 'Label is required'],
@@ -82,7 +107,7 @@ export async function saveServerById() {
   if (!valid) return;
 
   const body = {
-    label, host, port, username,
+    label, host, port, username, auth_mode, connection_method,
     auth_type: authKey ? 'key' : 'password',
     key_path:  authKey ? key_path : '',
     password:  !authKey ? password : '',
