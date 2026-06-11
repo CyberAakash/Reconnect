@@ -142,7 +142,10 @@ app.post('/api/logout', (req, res) => {
 app.use('/api', requireAuth);
 
 // ── SSH config builder ──
-function sshConfig(server, mode) {
+// `otp` controls only the auth handshake (independent of transport): when true,
+// ssh2 is driven straight to keyboard-interactive so the user can type a passcode.
+// Transport (config.sock for the proxy tunnel) is set by the caller.
+function sshConfig(server, { otp } = {}) {
   const config = {
     host: server.host,
     port: server.port,
@@ -152,8 +155,8 @@ function sshConfig(server, mode) {
     keepaliveInterval: 15000,
     keepaliveCountMax: 8,
   };
-  if (mode === 'otp') {
-    // Org OTP flow: server authenticates via a single one-time passcode over
+  if (otp) {
+    // OTP flow: authenticate via a single one-time passcode over
     // keyboard-interactive. Force ssh2 straight to it — no agent/publickey/
     // password attempts to muddy the negotiation (the agent has no identities,
     // and a dead publickey attempt makes ssh2 report "all methods failed"
@@ -393,29 +396,70 @@ class RemoteShell {
 //  SETTINGS
 // ════════════════════════════════════════
 
+// Global auth flow ('password' | 'otp').
 function getAuthMode() {
   const row = db.prepare(`SELECT value FROM settings WHERE key='auth_mode'`).get();
-  return row ? row.value : 'legacy';
+  return row ? row.value : 'otp';
 }
 
-app.get('/api/settings', (req, res) => {
-  const auth_mode = getAuthMode();
-  res.json({ auth_mode });
-});
+// Flow scope ('global' | 'standalone').
+function getAuthScope() {
+  const row = db.prepare(`SELECT value FROM settings WHERE key='auth_scope'`).get();
+  return row ? row.value : 'global';
+}
 
-app.put('/api/settings', (req, res) => {
-  const { auth_mode } = req.body;
-  if (!['legacy', 'otp'].includes(auth_mode)) {
-    return res.status(400).json({ error: 'Invalid auth_mode' });
+// Effective auth flow for a server: its own when scope is standalone, else global.
+function resolveAuthMode(serverId) {
+  if (getAuthScope() === 'standalone') {
+    const row = db.prepare(`SELECT auth_mode FROM servers WHERE id=?`).get(serverId);
+    if (row && row.auth_mode) return row.auth_mode;
   }
-  db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('auth_mode', ?)`).run(auth_mode);
-  // Drop all pooled sessions so each server re-auths under the new mode
+  return getAuthMode();
+}
+
+// Transport ('internal' = via zero-trust proxy + single-shell RPC; 'external' = direct SSH).
+function getConnectionMethod(serverId) {
+  const row = db.prepare(`SELECT connection_method FROM servers WHERE id=?`).get(serverId);
+  return row && row.connection_method === 'external' ? 'external' : 'internal';
+}
+function isInternal(serverId) {
+  return getConnectionMethod(serverId) === 'internal';
+}
+
+// OTP is only honored for internal (gateway) hosts; external hosts always use password/key.
+function usesOtp(serverId) {
+  return isInternal(serverId) && resolveAuthMode(serverId) === 'otp';
+}
+
+function dropAllSessions() {
   for (const [, session] of sessions) {
     clearTimeout(session.idleTimer);
     try { session.conn.end(); } catch (_) {}
   }
   sessions.clear();
-  res.json({ ok: true, auth_mode });
+}
+
+app.get('/api/settings', (req, res) => {
+  res.json({ auth_mode: getAuthMode(), auth_scope: getAuthScope() });
+});
+
+app.put('/api/settings', (req, res) => {
+  const { auth_mode, auth_scope } = req.body;
+  if (auth_mode !== undefined && !['password', 'otp'].includes(auth_mode)) {
+    return res.status(400).json({ error: 'Invalid auth_mode' });
+  }
+  if (auth_scope !== undefined && !['global', 'standalone'].includes(auth_scope)) {
+    return res.status(400).json({ error: 'Invalid auth_scope' });
+  }
+  if (auth_mode !== undefined) {
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('auth_mode', ?)`).run(auth_mode);
+  }
+  if (auth_scope !== undefined) {
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('auth_scope', ?)`).run(auth_scope);
+  }
+  // Drop all pooled sessions so each server re-auths under the new effective mode
+  dropAllSessions();
+  res.json({ ok: true, auth_mode: getAuthMode(), auth_scope: getAuthScope() });
 });
 
 // ════════════════════════════════════════
@@ -494,7 +538,7 @@ function ensureSession(id) {
       if (sessions.get(id) === session) sessions.delete(id);
     });
 
-    conn.connect(sshConfig(server, 'legacy'));
+    conn.connect(sshConfig(server, { otp: false }));
   });
 }
 
@@ -513,13 +557,11 @@ function getSession(id) {
 }
 
 /**
- * Route-level helper: branches on current auth_mode.
+ * Route-level helper for EXTERNAL (direct) servers — auto-pooled password/key
+ * connection. Internal servers never reach here; their callers use acquireRpc()
+ * after an explicit Connect (which sets up the proxy tunnel + single shell).
  */
 async function acquire(id) {
-  const mode = getAuthMode();
-  if (mode === 'otp') {
-    return getSession(id);
-  }
   return ensureSession(id);
 }
 
@@ -542,30 +584,72 @@ function acquireRpc(id) {
 // ════════════════════════════════════════
 
 app.get('/api/servers', (req, res) => {
-  const servers = db.prepare('SELECT id, label, host, port, username, auth_type, key_path FROM servers ORDER BY label').all();
+  const servers = db.prepare('SELECT id, label, host, port, username, auth_type, key_path, auth_mode, connection_method FROM servers ORDER BY label').all();
+  // Annotate each server with its effective flow so the UI can gate behavior.
+  const scope = getAuthScope();
+  const globalMode = getAuthMode();
+  for (const s of servers) {
+    if (!s.auth_mode) s.auth_mode = 'otp';
+    if (s.connection_method !== 'external') s.connection_method = 'internal';
+    s.effective_auth_mode = scope === 'standalone' ? s.auth_mode : globalMode;
+  }
   res.json(servers);
 });
 
+// Normalize the two per-server axes from a request body.
+const normMethod = (v) => (v === 'external' ? 'external' : 'internal');
+const normAuth   = (v) => (v === 'password' ? 'password' : 'otp');
+
 app.post('/api/servers', (req, res) => {
-  const { label, host, port, username, auth_type, password, key_path } = req.body;
+  const { label, host, port, username, auth_type, password, key_path, auth_mode, connection_method } = req.body;
   const encPass = auth_type === 'password' ? encrypt(password) : '';
-  const info = db.prepare('INSERT INTO servers (label, host, port, username, auth_type, password, key_path) VALUES (?,?,?,?,?,?,?)').run(label, host, port || 22, username, auth_type || 'password', encPass, key_path || '');
+  const mode = normAuth(auth_mode);
+  const method = normMethod(connection_method);
+  const info = db.prepare('INSERT INTO servers (label, host, port, username, auth_type, password, key_path, auth_mode, connection_method) VALUES (?,?,?,?,?,?,?,?,?)').run(label, host, port || 22, username, auth_type || 'password', encPass, key_path || '', mode, method);
   res.json({ id: info.lastInsertRowid });
 });
 
 app.put('/api/servers/:id', (req, res) => {
-  const { label, host, port, username, auth_type, password, key_path } = req.body;
+  const { label, host, port, username, auth_type, password, key_path, auth_mode, connection_method } = req.body;
+  const mode = normAuth(auth_mode);
+  const method = normMethod(connection_method);
   const encPass = auth_type === 'password' && password ? encrypt(password) : undefined;
   if (encPass !== undefined) {
-    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, auth_type=?, password=?, key_path=? WHERE id=?')
-      .run(label, host, port || 22, username, auth_type, encPass, key_path || '', req.params.id);
+    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, auth_type=?, password=?, key_path=?, auth_mode=?, connection_method=? WHERE id=?')
+      .run(label, host, port || 22, username, auth_type, encPass, key_path || '', mode, method, req.params.id);
   } else {
-    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, auth_type=?, key_path=? WHERE id=?')
-      .run(label, host, port || 22, username, auth_type, key_path || '', req.params.id);
+    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, auth_type=?, key_path=?, auth_mode=?, connection_method=? WHERE id=?')
+      .run(label, host, port || 22, username, auth_type, key_path || '', mode, method, req.params.id);
   }
-  // Drop pooled session so next op re-connects with new creds
+  // Drop pooled session so next op re-connects with new creds / flow / transport
   clearSession(+req.params.id);
   res.json({ ok: true });
+});
+
+// Quick per-server auth-flow toggle (overview inline control)
+app.put('/api/servers/:id/auth-mode', (req, res) => {
+  const { auth_mode } = req.body;
+  if (!['password', 'otp'].includes(auth_mode)) {
+    return res.status(400).json({ error: 'Invalid auth_mode' });
+  }
+  const info = db.prepare('UPDATE servers SET auth_mode=? WHERE id=?').run(auth_mode, req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: 'Server not found' });
+  // Drop pooled session so next op re-connects under the new flow
+  clearSession(+req.params.id);
+  res.json({ ok: true, auth_mode });
+});
+
+// Quick per-server connection-method (transport) toggle (overview inline control)
+app.put('/api/servers/:id/connection-method', (req, res) => {
+  const { connection_method } = req.body;
+  if (!['internal', 'external'].includes(connection_method)) {
+    return res.status(400).json({ error: 'Invalid connection_method' });
+  }
+  const info = db.prepare('UPDATE servers SET connection_method=? WHERE id=?').run(connection_method, req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: 'Server not found' });
+  // Drop pooled session so next op re-connects over the new transport
+  clearSession(+req.params.id);
+  res.json({ ok: true, connection_method });
 });
 
 app.delete('/api/servers/:id', (req, res) => {
@@ -579,8 +663,9 @@ app.post('/api/servers/:id/test', async (req, res) => {
   const id = +req.params.id;
   const server = db.prepare('SELECT * FROM servers WHERE id=?').get(id);
   if (!server) return res.status(404).json({ error: 'Server not found' });
-  const mode = getAuthMode();
-  if (mode === 'otp') {
+  // Internal hosts need an explicit Connect (proxy tunnel + single shell); just
+  // report the current session status. External hosts can be probed by connecting.
+  if (isInternal(id)) {
     const s = sessions.get(id);
     const status = s ? s.status : 'disconnected';
     return res.json({ ok: status === 'ready', status });
@@ -614,7 +699,11 @@ app.get('/api/servers/:id/connect', (req, res) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
-  const mode = getAuthMode();
+  // Two independent decisions:
+  //   internal  → tunnel through the zero-trust proxy + single-shell RPC
+  //   usesOtp   → prompt the user for a one-time passcode (internal + otp only)
+  const internal = isInternal(id);
+  const otp = usesOtp(id);
   const conn = new Client();
   const session = {
     conn,
@@ -626,7 +715,7 @@ app.get('/api/servers/:id/connect', (req, res) => {
   };
   sessions.set(id, session);
 
-  if (mode === 'otp') {
+  if (otp) {
     conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
       if (prompts.length === 0) { finish([]); return; }   // info-only round
       session.status = 'awaiting_otp';
@@ -635,6 +724,8 @@ app.get('/api/servers/:id/connect', (req, res) => {
       sse('prompt', { prompt: promptText });
     });
   } else if (server.auth_type !== 'key') {
+    // internal+password or external+password: finish keyboard-interactive
+    // silently with the stored password (no prompt).
     conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
       finish(prompts.map(() => decrypt(server.password)));
     });
@@ -642,7 +733,7 @@ app.get('/api/servers/:id/connect', (req, res) => {
 
   conn.on('ready', () => {
     session.otpFinish = null;
-    if (mode === 'otp') {
+    if (internal) {
       // The gateway grants only ONE channel and only an interactive shell, so
       // open that single shell now and drive it as an RPC channel for the whole
       // session (file ops, sysinfo, command console all flow through it).
@@ -678,7 +769,7 @@ app.get('/api/servers/:id/connect', (req, res) => {
   });
 
   conn.on('error', (err) => {
-    console.error(`[ssh] connect error for server ${id} (${server.host}) [mode=${mode}]: level=${err.level || 'n/a'} message=${err.message}`);
+    console.error(`[ssh] connect error for server ${id} (${server.host}) [method=${internal ? 'internal' : 'external'} otp=${otp}]: level=${err.level || 'n/a'} message=${err.message}`);
     sse('error', { message: err.message });
     sessions.delete(id);
     res.end();
@@ -688,8 +779,8 @@ app.get('/api/servers/:id/connect', (req, res) => {
     if (sessions.get(id) === session) sessions.delete(id);
   });
 
-  const config = sshConfig(server, mode);
-  if (mode === 'otp') {
+  const config = sshConfig(server, { otp });
+  if (internal) {
     // Tunnel through the zero-trust proxy — the gateway is only reachable via it.
     connectViaProxy(server.host, server.port || 22)
       .then((sock) => { config.sock = sock; conn.connect(config); })
@@ -804,7 +895,7 @@ app.get('/api/servers/:id/exec', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   // OTP mode: the gateway refuses exec channels — run via the shared shell RPC.
-  if (getAuthMode() === 'otp') {
+  if (isInternal(id)) {
     let rpc;
     try { rpc = acquireRpc(id); }
     catch (err) {
@@ -881,7 +972,7 @@ const SYSINFO_SCRIPT = [
 app.get('/api/servers/:id/sysinfo', async (req, res) => {
   const id = +req.params.id;
 
-  if (getAuthMode() === 'otp') {
+  if (isInternal(id)) {
     let rpc;
     try { rpc = acquireRpc(id); }
     catch (err) { return res.status(409).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED' : err.message }); }
@@ -920,7 +1011,7 @@ app.post('/api/servers/:id/upload', upload.single('file'), async (req, res) => {
   const localPath = req.file.path;
 
   // OTP mode: gateway refuses sftp — write via the shared shell (base64).
-  if (getAuthMode() === 'otp') {
+  if (isInternal(id)) {
     let rpc;
     try { rpc = acquireRpc(id); }
     catch (err) {
@@ -964,7 +1055,7 @@ app.post('/api/servers/:id/file/read', async (req, res) => {
 
   const remotePath = req.body.path;
 
-  if (getAuthMode() === 'otp') {
+  if (isInternal(id)) {
     let rpc;
     try { rpc = acquireRpc(id); }
     catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
@@ -1000,7 +1091,7 @@ app.post('/api/servers/:id/file/write', async (req, res) => {
 
   const { path: remotePath, content } = req.body;
 
-  if (getAuthMode() === 'otp') {
+  if (isInternal(id)) {
     let rpc;
     try { rpc = acquireRpc(id); }
     catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
@@ -1034,7 +1125,7 @@ app.post('/api/servers/:id/file/list', async (req, res) => {
 
   const dirPath = req.body.path;
 
-  if (getAuthMode() === 'otp') {
+  if (isInternal(id)) {
     let rpc;
     try { rpc = acquireRpc(id); }
     catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
@@ -1079,7 +1170,7 @@ app.post('/api/servers/:id/file/delete', async (req, res) => {
 
   const filePath = req.body.path;
 
-  if (getAuthMode() === 'otp') {
+  if (isInternal(id)) {
     let rpc;
     try { rpc = acquireRpc(id); }
     catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
@@ -1242,7 +1333,7 @@ wss.on('connection', async (ws, req) => {
 
   // OTP mode: the single allowed channel is owned by the RPC shell, so a live
   // PTY isn't available — the UI uses the command console instead.
-  if (getAuthMode() === 'otp') {
+  if (isInternal(id)) {
     ws.send(JSON.stringify({ type: 'error', message: 'Live terminal is unavailable over the zero-trust gateway. Use the command console.' }));
     ws.close();
     return;
