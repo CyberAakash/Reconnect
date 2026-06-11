@@ -129,6 +129,14 @@
                 <div class="rt-bento-toolbar">
                   <span class="rt-bento-toolbar-title" id="bento-server-name">—</span>
                   <div class="rt-spacer"></div>
+                  <div class="rt-seg sm" id="ov-method-seg" role="group" aria-label="Connection method" style="display:none">
+                    <button type="button" id="ov-method-internal">Internal</button>
+                    <button type="button" id="ov-method-external">External</button>
+                  </div>
+                  <div class="rt-seg sm" id="ov-flow-seg" role="group" aria-label="Authentication flow" style="display:none">
+                    <button type="button" id="ov-flow-otp">OTP</button>
+                    <button type="button" id="ov-flow-password">Password</button>
+                  </div>
                   <button class="rt-btn primary sm" id="ov-connect-btn"><!-- connect --> <span class="rt-btn-txt">Connect</span></button>
                   <button class="rt-btn sm" id="ov-disconnect-btn" style="display:none"><!-- disconnect --> <span class="rt-btn-txt">Disconnect</span></button>
                   <button class="rt-btn sm" id="sysinfo-refresh-btn"><!-- refresh --> <span class="rt-btn-txt">Refresh</span></button>
@@ -327,6 +335,22 @@
         <input id="sm-pass" class="rt-input-el" type="password" placeholder="••••••••••" />
         <span class="rt-hint">Stored encrypted locally.</span>
       </div>
+      <div class="rt-field">
+        <span class="rt-label">Connection method</span>
+        <div class="rt-seg" role="group" aria-label="Connection method">
+          <button type="button" id="sm-method-internal" class="active" aria-pressed="true">Internal</button>
+          <button type="button" id="sm-method-external" aria-pressed="false">External</button>
+        </div>
+        <span class="rt-hint">Internal tunnels through the zero-trust proxy. External connects directly.</span>
+      </div>
+      <div class="rt-field" id="sm-flow-field">
+        <span class="rt-label">Authentication flow</span>
+        <div class="rt-seg" role="group" aria-label="Authentication flow">
+          <button type="button" id="sm-flow-otp" class="active" aria-pressed="true">OTP (2-factor)</button>
+          <button type="button" id="sm-flow-password" aria-pressed="false">Password</button>
+        </div>
+        <span class="rt-hint">Internal only. Used when flow scope is set to Per-server (see Settings).</span>
+      </div>
     </div>
     <div class="rt-modal-foot">
       <button class="rt-btn ghost" id="sm-cancel">Cancel</button>
@@ -344,11 +368,19 @@
     </div>
     <div class="rt-modal-body">
       <div class="rt-field">
-        <span class="rt-label">Connection flow</span>
-        <span class="rt-hint" style="margin-bottom:4px">Applies globally to every server you connect to.</span>
-        <div class="rt-seg" role="group" aria-label="Connection flow">
+        <span class="rt-label">Flow scope</span>
+        <span class="rt-hint" style="margin-bottom:4px">Use one flow for every server, or let each server use its own.</span>
+        <div class="rt-seg" role="group" aria-label="Flow scope">
+          <button type="button" id="sett-scope-global" class="active" aria-pressed="true">Global</button>
+          <button type="button" id="sett-scope-standalone" aria-pressed="false">Per-server</button>
+        </div>
+      </div>
+      <div class="rt-field" id="sett-global-flow">
+        <span class="rt-label">Authentication flow</span>
+        <span class="rt-hint" style="margin-bottom:4px">Applies to internal servers you connect to (global scope).</span>
+        <div class="rt-seg" role="group" aria-label="Authentication flow">
           <button type="button" id="sett-otp" aria-pressed="false">OTP (2-factor)</button>
-          <button type="button" id="sett-legacy" class="active" aria-pressed="true">Legacy</button>
+          <button type="button" id="sett-password" class="active" aria-pressed="true">Password</button>
         </div>
         <div class="rt-settings-explain" id="sett-explain">
           <span id="sett-explain-ico"><!-- connect --></span>

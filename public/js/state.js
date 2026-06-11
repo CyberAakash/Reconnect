@@ -9,7 +9,8 @@ export const STATE = {
   outputs: {},       // id -> array of output entries
   savedCommands: [],
   savedFiles: [],
-  authMode: 'legacy',
+  authMode: 'otp',      // global connection flow (used when authScope === 'global')
+  authScope: 'global',  // 'global' (one switch rules all) | 'standalone' (per-server flow)
   sidebarCollapsed: localStorage.getItem('rt-sidebar-collapsed') === '1',
   mobileNavOpen: false,
   sseConnections: {},   // id -> EventSource
@@ -35,3 +36,23 @@ export const STATE = {
   monaco: null,        // monaco editor instance (singleton)
   models: new Map(),   // path -> monaco.editor.ITextModel
 };
+
+/**
+ * Effective auth flow ('otp' | 'password') for a given server.
+ * The server annotates each list entry with `effective_auth_mode` (resolved
+ * from scope + per-server flow); fall back to the global flow if absent.
+ */
+export function effectiveAuthMode(id) {
+  const s = STATE.servers.find(sv => sv.id === id);
+  return (s && s.effective_auth_mode) || STATE.authMode;
+}
+
+/**
+ * Transport for a server: true = internal (zero-trust proxy + single-shell RPC
+ * console + base64 file ops), false = external (direct SSH, live PTY + SFTP).
+ * Drives the channel-mode gating in the UI. Defaults to internal when unknown.
+ */
+export function isInternal(id) {
+  const s = STATE.servers.find(sv => sv.id === id);
+  return !s || s.connection_method !== 'external';
+}

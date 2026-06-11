@@ -1,4 +1,4 @@
-import { STATE } from '../state.js';
+import { STATE, effectiveAuthMode, isInternal } from '../state.js';
 import { api } from '../api.js';
 import { toast } from '../ui/toast.js';
 import { confirm } from '../ui/confirm.js';
@@ -86,7 +86,7 @@ function handleConnectEvent(id, data, sse) {
       // OTP timed out (slow email / slow entry): auto-start a fresh connection
       // so the user can use the latest code — like clicking Connect again.
       const isTimeout = /tim(e|ed)\s*out/i.test(msg);
-      if (STATE.authMode === 'otp' && isTimeout && (_otpRetry[id] || 0) < OTP_MAX_AUTO_RETRY) {
+      if (isInternal(id) && effectiveAuthMode(id) === 'otp' && isTimeout && (_otpRetry[id] || 0) < OTP_MAX_AUTO_RETRY) {
         _otpRetry[id] = (_otpRetry[id] || 0) + 1;
         appendOutput(id, { type: 'info', text: `OTP timed out — requesting a fresh passcode… (attempt ${_otpRetry[id]}/${OTP_MAX_AUTO_RETRY})`, ts: Date.now() });
         if (STATE.selectedId === id) loadOutputForServer(id);

@@ -12,7 +12,7 @@ import { toast } from './ui/toast.js';
 import { renderServerList, loadServers, setSidebarCollapsed, openMobileNav, closeMobileNav, _setSidebarDeps } from './ui/sidebar.js';
 import { updateStatusPill } from './ui/statusPill.js';
 import { setTab, _setTabDeps } from './ui/tabs.js';
-import { renderOverview, loadSysInfo } from './ui/overview.js';
+import { renderOverview, loadSysInfo, toggleServerFlow, toggleServerMethod, _setOverviewDeps } from './ui/overview.js';
 import { setOutputPanel, appendOutput, loadOutputForServer, _setOutputPanelDeps } from './ui/outputPanel.js';
 import { initResizeHandle, _setResizeDeps } from './ui/resize.js';
 
@@ -23,8 +23,8 @@ import { renderFilesTab, loadFileTree, renderEditorTabs, saveActiveFile, compile
 import { loadQuickCommands, toggleQuickDrawer, addQuickCommand, closeQcModal, saveQuickCommand, _setQuickCommandsDeps } from './features/quickCommands.js';
 
 // Modals
-import { openServerModalById, closeServerModal, setServerAuthType, saveServerById, deleteServer, _setServerModalDeps } from './modals/serverModal.js';
-import { openSettings, closeSettings, updateSettingsUI, saveSettings } from './modals/settingsModal.js';
+import { openServerModalById, closeServerModal, setServerAuthType, setServerFlow, setServerMethod, saveServerById, deleteServer, _setServerModalDeps } from './modals/serverModal.js';
+import { openSettings, closeSettings, updateSettingsUI, saveSettings, _setSettingsModalDeps } from './modals/settingsModal.js';
 import { openHelp, closeHelp } from './modals/helpModal.js';
 import { openOtpModal, closeOtpModal, _setOtpDeps } from './modals/otpModal.js';
 
@@ -82,6 +82,12 @@ _setServerModalDeps(
   () => _loadServersAndRestore(),
   (id, restoring) => selectServer(id, restoring)
 );
+
+// settingsModal needs: loadServers (to refresh effective flows after a scope change)
+_setSettingsModalDeps(() => _loadServersAndRestore());
+
+// overview needs: loadServers (to refresh after an inline flow toggle)
+_setOverviewDeps(() => _loadServersAndRestore());
 
 /* ===== selectServer (orchestrator, lives here) ===== */
 function selectServer(id, restoring = false) {
@@ -407,6 +413,16 @@ function initUI() {
   document.getElementById('sm-save').addEventListener('click', saveServerById);
   document.getElementById('sm-auth-key').addEventListener('click', () => setServerAuthType('key'));
   document.getElementById('sm-auth-pass').addEventListener('click', () => setServerAuthType('password'));
+  document.getElementById('sm-method-internal').addEventListener('click', () => setServerMethod('internal'));
+  document.getElementById('sm-method-external').addEventListener('click', () => setServerMethod('external'));
+  document.getElementById('sm-flow-otp').addEventListener('click', () => setServerFlow('otp'));
+  document.getElementById('sm-flow-password').addEventListener('click', () => setServerFlow('password'));
+
+  // Overview inline per-server transport + auth-flow toggles
+  document.getElementById('ov-method-internal').addEventListener('click', () => toggleServerMethod('internal'));
+  document.getElementById('ov-method-external').addEventListener('click', () => toggleServerMethod('external'));
+  document.getElementById('ov-flow-otp').addEventListener('click', () => toggleServerFlow('otp'));
+  document.getElementById('ov-flow-password').addEventListener('click', () => toggleServerFlow('password'));
 
   // Settings modal
   document.getElementById('sett-close').innerHTML = icon('close', 14);
@@ -414,7 +430,9 @@ function initUI() {
   document.getElementById('help-close').addEventListener('click', closeHelp);
   document.getElementById('sett-done').addEventListener('click', saveSettings);
   document.getElementById('sett-otp').addEventListener('click', () => { STATE.authMode = 'otp'; updateSettingsUI(); });
-  document.getElementById('sett-legacy').addEventListener('click', () => { STATE.authMode = 'legacy'; updateSettingsUI(); });
+  document.getElementById('sett-password').addEventListener('click', () => { STATE.authMode = 'password'; updateSettingsUI(); });
+  document.getElementById('sett-scope-global').addEventListener('click', () => { STATE.authScope = 'global'; updateSettingsUI(); });
+  document.getElementById('sett-scope-standalone').addEventListener('click', () => { STATE.authScope = 'standalone'; updateSettingsUI(); });
 
   // OTP modal
   document.getElementById('otp-cancel').addEventListener('click', closeOtpModal);
@@ -482,8 +500,9 @@ async function init() {
   // first render (not only after the Settings modal is opened).
   try {
     const settings = await api('/api/settings');
-    STATE.authMode = settings.auth_mode || 'legacy';
-  } catch { /* default stays 'legacy' */ }
+    STATE.authMode = settings.auth_mode || 'otp';
+    STATE.authScope = settings.auth_scope || 'global';
+  } catch { /* defaults stay 'otp' / 'global' */ }
   await _loadServersAndRestore();
 
   // Periodic polling
