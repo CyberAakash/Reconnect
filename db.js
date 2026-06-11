@@ -39,7 +39,38 @@ db.exec(`
   );
 `);
 
-// Seed default settings if not already present
-db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('auth_mode', 'legacy')`).run();
+// ── Migration: per-server auth flow ──────────────────────────────────────
+// Add `auth_mode` to servers so each server can run its own connection flow.
+// New rows default to 'otp'; pre-existing rows are backfilled to 'legacy' so
+// upgrades don't change how already-configured servers connect.
+const serverCols = db.prepare(`PRAGMA table_info(servers)`).all();
+if (!serverCols.some(c => c.name === 'auth_mode')) {
+  db.exec(`ALTER TABLE servers ADD COLUMN auth_mode TEXT DEFAULT 'otp'`);
+  db.prepare(`UPDATE servers SET auth_mode='legacy'`).run();
+}
+
+// ── Migration: connection method (transport) ──────────────────────────────
+// Each server picks a transport independent of its auth flow:
+//   'internal' → tunnel through the zero-trust proxy + single-shell RPC
+//   'external' → direct SSH + full exec/SFTP/PTY channels (password/key only)
+// Existing rows inherit 'internal' via the column DEFAULT (they were all reached
+// through the proxy under the old OTP flow), so no separate backfill is needed.
+if (!serverCols.some(c => c.name === 'connection_method')) {
+  db.exec(`ALTER TABLE servers ADD COLUMN connection_method TEXT DEFAULT 'internal'`);
+}
+
+// ── Migration: rename auth flow value 'legacy' → 'password' ───────────────
+// 'legacy' used to mean "direct + password"; transport is now its own axis
+// (connection_method), so the auth axis is simply otp | password. Idempotent:
+// no rows match once renamed.
+db.prepare(`UPDATE servers SET auth_mode='password' WHERE auth_mode='legacy'`).run();
+db.prepare(`UPDATE settings SET value='password' WHERE key='auth_mode' AND value='legacy'`).run();
+
+// Seed default settings if not already present.
+// Fresh installs default to OTP globally (OTP-first); existing DBs keep their
+// stored value since INSERT OR IGNORE is a no-op when the row already exists.
+db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('auth_mode', 'otp')`).run();
+// Auth flow scope: 'global' (one switch rules all) vs 'standalone' (per-server).
+db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('auth_scope', 'global')`).run();
 
 module.exports = db;
