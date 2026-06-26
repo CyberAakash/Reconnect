@@ -146,8 +146,9 @@ export function setServerTerminal(mode) {
 }
 
 // Allow + warn: every axis stays selectable, but on Internal transport the
-// gateway grants a single channel, so SFTP / live-PTY picks are flagged as
-// "applies on External only" rather than being hidden or disabled.
+// gateway blocks the SFTP subsystem, so an SFTP pick on Internal is flagged as
+// falling back to one-channel. Live PTY DOES work over the gateway, so it is
+// not flagged.
 function refreshMethodHints() {
   const internal = document.getElementById('sm-method-internal')?.classList.contains('active');
   const flowHint = document.getElementById('sm-flow-hint');
@@ -158,12 +159,9 @@ function refreshMethodHints() {
     : 'External servers authenticate with the stored key/password — flow does not apply.';
   const sftp = document.getElementById('sm-explorer-sftp')?.classList.contains('active');
   if (expHint) expHint.innerHTML = internal && sftp
-    ? '⚠ Internal transport has one channel — SFTP falls back to one-channel until you switch to External.'
+    ? '⚠ The zero-trust gateway blocks SFTP — Internal hosts fall back to one-channel (base64). Use External for SFTP.'
     : 'SFTP is faster &amp; binary-safe; one-channel works anywhere a shell does.';
-  const pty = document.getElementById('sm-term-pty')?.classList.contains('active');
-  if (termHint) termHint.innerHTML = internal && pty
-    ? '⚠ Internal transport has one channel — live PTY falls back to the command panel until you switch to External.'
-    : 'Live PTY supports vim/htop/less; command panel runs one command at a time.';
+  if (termHint) termHint.textContent = 'Live PTY supports vim/htop/less; command panel runs one command at a time.';
   smRefreshDirty();
 }
 

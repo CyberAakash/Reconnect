@@ -61,12 +61,14 @@ export function updateSettingsUI() {
   setSeg('sett-explorer-sftp', 'sett-explorer-onechannel', STATE.defaultExplorer === 'sftp');
   setSeg('sett-term-pty', 'sett-term-console', STATE.defaultTerminal === 'pty');
 
-  // In standalone scope the global defaults don't apply — dim them and explain.
+  // The defaults stay editable in every scope (you can set them anytime); the
+  // scope just decides whether they apply. A faint dim signals "not in effect
+  // right now" in per-server scope, but clicks still work.
   const defaults = document.getElementById('sett-defaults');
   if (defaults) {
-    defaults.style.opacity = standalone ? '0.5' : '';
-    defaults.style.pointerEvents = standalone ? 'none' : '';
-    defaults.setAttribute('aria-disabled', standalone);
+    defaults.style.opacity = standalone ? '0.6' : '';
+    defaults.style.pointerEvents = '';
+    defaults.removeAttribute('aria-disabled');
   }
 
   const explainTxt = document.getElementById('sett-explain-txt');
@@ -74,10 +76,10 @@ export function updateSettingsUI() {
   if (explainTxt && explainIco) {
     if (standalone) {
       explainIco.innerHTML = icon('server', 14);
-      explainTxt.textContent = 'Each server uses its own settings — set transport, auth, explorer and terminal when creating or editing it.';
+      explainTxt.textContent = 'Per-server scope: each server uses its own settings. These defaults are saved but only take effect in Global scope.';
     } else {
       explainIco.innerHTML = icon('settings', 14);
-      explainTxt.textContent = 'These defaults apply to every server. Internal transport always uses one-channel + command panel regardless.';
+      explainTxt.textContent = 'Global scope: these defaults apply to every server. Internal hosts still use one-channel files (the gateway blocks SFTP).';
     }
   }
 
