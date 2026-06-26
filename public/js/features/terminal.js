@@ -1,4 +1,4 @@
-import { STATE, isInternal } from '../state.js';
+import { STATE, effectiveTerminalMode } from '../state.js';
 import { ensureWterm } from '../wterm.js';
 import { applyTerminalTheme } from '../theme.js';
 
@@ -87,7 +87,7 @@ export function updateTerminalState(id) {
   if (status === 'connected') {
     disView.style.display  = 'none';
     replView.style.display = 'flex';
-    if (isInternal(id)) {
+    if (effectiveTerminalMode(id) !== 'pty') {
       // DOM command console: alive as long as it's built for this server.
       if (!STATE.termConsole || STATE._termServerId !== id || !STATE._termConsoleEls) {
         STATE._termServerId = id;
@@ -345,9 +345,9 @@ function buildCommandConsole(id) {
 }
 
 export function runTerminalCommand(cmd) {
-  // OTP mode: run through the command console.
-  if (isInternal(STATE.selectedId)) { STATE._consoleExternal?.(cmd); return; }
-  // Legacy live shell: stream over the WebSocket PTY.
+  // Command-panel mode: run through the DOM command console.
+  if (effectiveTerminalMode(STATE.selectedId) !== 'pty') { STATE._consoleExternal?.(cmd); return; }
+  // Live PTY: stream over the WebSocket.
   if (STATE.termWs && STATE.termWs.readyState === WebSocket.OPEN) {
     STATE.termWs.send(cmd + '\n');
   }

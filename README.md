@@ -158,11 +158,28 @@ The server appears in the sidebar. Click it to open its dashboard, then **Connec
 
 ---
 
-## Authentication
+## Connection profiles (four independent axes)
 
-REConnect supports two authentication flows. **OTP is the default and recommended flow; legacy password/key auth is a fallback that is being phased out and will be removed in a future release.** You can switch flows globally in **Settings (⚙)**.
+Every server is configured along **four independent axes**, settable when you create or edit it, and changeable on the fly from the overview toolbar:
 
-### OTP / Zero-Trust (default)
+| Axis | Options | What it controls |
+|------|---------|------------------|
+| **Transport** | `Internal` / `External` | `Internal` tunnels through the zero-trust proxy (single shell channel). `External` connects directly over SSH. |
+| **Auth flow** | `OTP` / `Password` | `OTP` prompts for a one-time passcode (internal hosts only). `External` always uses the stored key/password. |
+| **Explorer** | `SFTP` / `One-channel` | `SFTP` uses the SFTP subsystem (fast, binary-safe). `One-channel` moves files as base64 over a shell — works anywhere a shell does. |
+| **Terminal** | `Live PTY` / `Command panel` | `Live PTY` is a full interactive terminal (vim/htop/less). `Command panel` runs one command at a time and prints output. |
+
+### Global defaults + scope
+
+In **Settings (⚙)** each axis has a tool-wide **default**, plus a **Configuration scope** switch:
+- **Global** — the four defaults apply to every server.
+- **Per-server** — each server uses its own stored axis values (set them in the Add/Edit dialog or the inline overview toggles).
+
+### The internal-transport constraint (allow + warn)
+
+The zero-trust gateway grants exactly **one** SSH channel per login, so a live PTY and the SFTP subsystem are physically impossible there. You can still *pick* `SFTP`/`Live PTY` on an internal server — REConnect **downgrades** them to `One-channel`/`Command panel` at connect time and shows a notice (the inline toggles turn amber to flag it). Switch the server to **External** to use SFTP/PTY for real.
+
+### OTP / Zero-Trust (default for internal hosts)
 
 The organization's SSH access goes through a **ZAC certificate-based, password-less zero-trust** path. You never type a server password — a **one-time passcode (OTP)** sent to your Zoho email authorizes the session:
 
@@ -179,9 +196,13 @@ Because the zero-trust gateway grants **one interactive shell per login and bloc
 - In **0Agent**, set the default network to the appropriate zero-host (e.g. *CT1 Localzoho Network*) and **reload policies**; revert to *none* when done.
 - Verify with a plain terminal first: `ssh sas@<server-ip>` should prompt for an OTP.
 
-### Legacy (password / key)
+### Direct (password / key) — External transport
 
-For non-zero-trust hosts (or until OTP rollout completes), switch to **Legacy** in Settings and store a password or private key per server. Legacy mode gives a full live PTY terminal and native SFTP. This flow is deprecated.
+For non-zero-trust hosts, set the server's **Transport = External** and store a password or private key. External hosts connect over plain SSH and can use any combination of **SFTP/One-channel** explorer and **Live PTY/Command panel** terminal.
+
+### Testing every flow locally
+
+You don't need the corporate gateway to exercise the non-OTP flows. A self-contained Docker harness (`test/`) stands up a direct SSH host and a keyboard-interactive (OTP-style) host behind a local CONNECT proxy. See **[`test/seed-servers.md`](test/seed-servers.md)** for the full matrix and run recipe (`docker compose up` + `node test/proxy.js` + `RECONNECT_SSH_PROXY=127.0.0.1:3128 npm start`).
 
 ### Running Commands
 

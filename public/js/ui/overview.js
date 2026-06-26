@@ -1,7 +1,6 @@
 import { STATE } from '../state.js';
 import { icon } from '../icons.js';
 import { esc, api } from '../api.js';
-import { toast } from './toast.js';
 
 // Injected to avoid circular dep (overview -> loadServers -> sidebar -> ...)
 let _loadServers;
@@ -9,56 +8,33 @@ export function _setOverviewDeps(loadServers) {
   _loadServers = loadServers;
 }
 
-// Reflect the per-server transport + auth flow in the toolbar's inline toggles.
-// Method (Internal/External) is always shown; the auth flow (OTP/Password) only
-// applies to internal hosts and only when flow scope is 'standalone'.
+// Read-only summary of the server's connection profile, shown next to its name
+// in the overview toolbar. The four axes themselves are configured in the
+// Settings dialog (the toolbar's Settings button → serverModal). A downgraded
+// axis (SFTP/PTY requested on an internal host) is flagged amber with a tooltip.
 export function updateInlineControls(server) {
-  const methodSeg = document.getElementById('ov-method-seg');
-  const flowSeg   = document.getElementById('ov-flow-seg');
-  if (!methodSeg || !flowSeg) return;
+  const wrap = document.getElementById('ov-axes-summary');
+  if (!wrap) return;
 
-  const internal = server.connection_method !== 'external';
-  methodSeg.style.display = '';
-  document.getElementById('ov-method-internal').classList.toggle('active', internal);
-  document.getElementById('ov-method-internal').setAttribute('aria-pressed', internal);
-  document.getElementById('ov-method-external').classList.toggle('active', !internal);
-  document.getElementById('ov-method-external').setAttribute('aria-pressed', !internal);
+  const internal = (server.effective_connection_method || server.connection_method) !== 'external';
+  const chips = [];
+  chips.push({ text: internal ? 'Internal' : 'External' });
+  // Auth flow only matters for internal hosts.
+  if (internal) chips.push({ text: (server.effective_auth_mode || server.auth_mode) === 'password' ? 'Password' : 'OTP' });
+  chips.push({
+    text: server.explorer_mode === 'sftp' ? 'SFTP' : 'One-channel',
+    down: !!server.explorer_downgraded,
+    title: server.explorer_downgraded ? 'SFTP unavailable on internal transport — using one-channel' : '',
+  });
+  chips.push({
+    text: server.terminal_mode === 'pty' ? 'Live PTY' : 'Command panel',
+    down: !!server.terminal_downgraded,
+    title: server.terminal_downgraded ? 'Live PTY unavailable on internal transport — using command panel' : '',
+  });
 
-  if (!internal || STATE.authScope !== 'standalone') { flowSeg.style.display = 'none'; return; }
-  flowSeg.style.display = '';
-  const otp = server.auth_mode !== 'password';
-  document.getElementById('ov-flow-otp').classList.toggle('active', otp);
-  document.getElementById('ov-flow-otp').setAttribute('aria-pressed', otp);
-  document.getElementById('ov-flow-password').classList.toggle('active', !otp);
-  document.getElementById('ov-flow-password').setAttribute('aria-pressed', !otp);
-}
-
-async function _patchSelected(path, body, okMsg) {
-  const id = STATE.selectedId;
-  if (!id) return;
-  try {
-    await api(`/api/servers/${id}/${path}`, { method: 'PUT', body });
-    await _loadServers?.();
-    const fresh = STATE.servers.find(s => s.id === id);
-    if (fresh && STATE.centerTab === 'overview' && STATE.selectedId === id) renderOverview(fresh);
-    toast(okMsg);
-  } catch (e) {
-    toast('Failed: ' + e.message, 'error');
-  }
-}
-
-// Flip the selected server's auth flow (internal hosts only).
-export async function toggleServerFlow(mode) {
-  const server = STATE.servers.find(s => s.id === STATE.selectedId);
-  if (server && (server.auth_mode || 'otp') === mode) return; // no-op
-  await _patchSelected('auth-mode', { auth_mode: mode }, `Auth flow set to ${mode === 'otp' ? 'OTP' : 'Password'}`);
-}
-
-// Flip the selected server's transport.
-export async function toggleServerMethod(method) {
-  const server = STATE.servers.find(s => s.id === STATE.selectedId);
-  if (server && (server.connection_method || 'internal') === method) return; // no-op
-  await _patchSelected('connection-method', { connection_method: method }, `Connection set to ${method === 'internal' ? 'Internal' : 'External'}`);
+  wrap.innerHTML = chips.map(c =>
+    `<span class="rt-axis-chip${c.down ? ' rt-axis-chip--down' : ''}"${c.title ? ` title="${esc(c.title)}"` : ''}>${esc(c.text)}</span>`
+  ).join('');
 }
 
 function ringMeter(pct, size = 52) {

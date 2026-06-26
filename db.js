@@ -66,11 +66,42 @@ if (!serverCols.some(c => c.name === 'connection_method')) {
 db.prepare(`UPDATE servers SET auth_mode='password' WHERE auth_mode='legacy'`).run();
 db.prepare(`UPDATE settings SET value='password' WHERE key='auth_mode' AND value='legacy'`).run();
 
+// ── Migration: per-server explorer + terminal axes ────────────────────────
+// Explorer and terminal used to be implied by connection_method. They are now
+// first-class per-server axes, freely chosen on external transport:
+//   explorer_mode: 'sftp'       (SFTP subsystem)        | 'onechannel' (base64 over a shell)
+//   terminal_mode: 'pty'        (live interactive PTY)  | 'console'    (one-shot command panel)
+// New columns default to the internal-safe modes; existing external rows are
+// backfilled to sftp/pty so already-configured servers keep behaving exactly
+// as before. (Internal transport can only do onechannel/console — the gateway
+// grants a single channel — so it keeps the defaults.)
+if (!serverCols.some(c => c.name === 'explorer_mode')) {
+  db.exec(`ALTER TABLE servers ADD COLUMN explorer_mode TEXT DEFAULT 'onechannel'`);
+  db.prepare(`UPDATE servers SET explorer_mode='sftp' WHERE connection_method='external'`).run();
+}
+if (!serverCols.some(c => c.name === 'terminal_mode')) {
+  db.exec(`ALTER TABLE servers ADD COLUMN terminal_mode TEXT DEFAULT 'console'`);
+  db.prepare(`UPDATE servers SET terminal_mode='pty' WHERE connection_method='external'`).run();
+}
+
 // Seed default settings if not already present.
 // Fresh installs default to OTP globally (OTP-first); existing DBs keep their
 // stored value since INSERT OR IGNORE is a no-op when the row already exists.
 db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('auth_mode', 'otp')`).run();
 // Auth flow scope: 'global' (one switch rules all) vs 'standalone' (per-server).
 db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('auth_scope', 'global')`).run();
+
+// ── Global defaults for every connection axis ─────────────────────────────
+// Each per-server axis has a tool-wide default applied when config_scope is
+// 'global'. `config_scope` generalizes the old `auth_scope` (which only ruled
+// the auth axis) to govern all four axes; it is seeded from auth_scope so an
+// upgrade preserves the user's existing global/standalone choice.
+const _authScope = db.prepare(`SELECT value FROM settings WHERE key='auth_scope'`).get();
+const _authDef   = db.prepare(`SELECT value FROM settings WHERE key='auth_mode'`).get();
+db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('config_scope', ?)`).run(_authScope?.value || 'global');
+db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('default_connection_method', 'internal')`).run();
+db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('default_auth_mode', ?)`).run(_authDef?.value || 'otp');
+db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('default_explorer_mode', 'onechannel')`).run();
+db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('default_terminal_mode', 'console')`).run();
 
 module.exports = db;

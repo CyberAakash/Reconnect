@@ -12,7 +12,7 @@ import { toast } from './ui/toast.js';
 import { renderServerList, loadServers, setSidebarCollapsed, openMobileNav, closeMobileNav, _setSidebarDeps } from './ui/sidebar.js';
 import { updateStatusPill } from './ui/statusPill.js';
 import { setTab, _setTabDeps } from './ui/tabs.js';
-import { renderOverview, loadSysInfo, toggleServerFlow, toggleServerMethod, _setOverviewDeps } from './ui/overview.js';
+import { renderOverview, loadSysInfo, _setOverviewDeps } from './ui/overview.js';
 import { setOutputPanel, appendOutput, loadOutputForServer, _setOutputPanelDeps } from './ui/outputPanel.js';
 import { initResizeHandle, _setResizeDeps } from './ui/resize.js';
 
@@ -23,7 +23,7 @@ import { renderFilesTab, loadFileTree, renderEditorTabs, saveActiveFile, compile
 import { loadQuickCommands, toggleQuickDrawer, addQuickCommand, closeQcModal, saveQuickCommand, _setQuickCommandsDeps } from './features/quickCommands.js';
 
 // Modals
-import { openServerModalById, closeServerModal, setServerAuthType, setServerFlow, setServerMethod, saveServerById, deleteServer, _setServerModalDeps } from './modals/serverModal.js';
+import { openServerModalById, closeServerModal, setServerAuthType, setServerFlow, setServerMethod, setServerExplorer, setServerTerminal, saveServerById, deleteCurrentServer, smRefreshDirty, _setServerModalDeps } from './modals/serverModal.js';
 import { openSettings, closeSettings, updateSettingsUI, saveSettings, _setSettingsModalDeps } from './modals/settingsModal.js';
 import { openHelp, closeHelp } from './modals/helpModal.js';
 import { openOtpModal, closeOtpModal, _setOtpDeps } from './modals/otpModal.js';
@@ -321,13 +321,8 @@ function initUI() {
   // Overview toolbar
   const detailsEditBtn = document.getElementById('details-edit-btn');
   if (detailsEditBtn) {
-    detailsEditBtn.innerHTML = `${icon('pencil', 13)} <span class="rt-btn-txt">Edit</span>`;
+    detailsEditBtn.innerHTML = `${icon('settings', 13)} <span class="rt-btn-txt">Settings</span>`;
     detailsEditBtn.addEventListener('click', () => { if (STATE.selectedId) openServerModalById(STATE.selectedId); });
-  }
-  const detailsDeleteBtn = document.getElementById('details-delete-btn');
-  if (detailsDeleteBtn) {
-    detailsDeleteBtn.innerHTML = `${icon('trash', 13)} <span class="rt-btn-txt">Delete</span>`;
-    detailsDeleteBtn.addEventListener('click', () => { if (STATE.selectedId) deleteServer(STATE.selectedId); });
   }
   const sysRefreshBtn = document.getElementById('sysinfo-refresh-btn');
   if (sysRefreshBtn) {
@@ -411,18 +406,23 @@ function initUI() {
   document.getElementById('sm-close').addEventListener('click', closeServerModal);
   document.getElementById('sm-cancel').addEventListener('click', closeServerModal);
   document.getElementById('sm-save').addEventListener('click', saveServerById);
+  document.getElementById('sm-delete').addEventListener('click', deleteCurrentServer);
+  // Enable "Save Changes" only once a field actually changes.
+  ['sm-label', 'sm-host', 'sm-port', 'sm-user', 'sm-key', 'sm-pass'].forEach(id =>
+    document.getElementById(id).addEventListener('input', smRefreshDirty));
   document.getElementById('sm-auth-key').addEventListener('click', () => setServerAuthType('key'));
   document.getElementById('sm-auth-pass').addEventListener('click', () => setServerAuthType('password'));
   document.getElementById('sm-method-internal').addEventListener('click', () => setServerMethod('internal'));
   document.getElementById('sm-method-external').addEventListener('click', () => setServerMethod('external'));
   document.getElementById('sm-flow-otp').addEventListener('click', () => setServerFlow('otp'));
   document.getElementById('sm-flow-password').addEventListener('click', () => setServerFlow('password'));
+  document.getElementById('sm-explorer-sftp').addEventListener('click', () => setServerExplorer('sftp'));
+  document.getElementById('sm-explorer-onechannel').addEventListener('click', () => setServerExplorer('onechannel'));
+  document.getElementById('sm-term-pty').addEventListener('click', () => setServerTerminal('pty'));
+  document.getElementById('sm-term-console').addEventListener('click', () => setServerTerminal('console'));
 
-  // Overview inline per-server transport + auth-flow toggles
-  document.getElementById('ov-method-internal').addEventListener('click', () => toggleServerMethod('internal'));
-  document.getElementById('ov-method-external').addEventListener('click', () => toggleServerMethod('external'));
-  document.getElementById('ov-flow-otp').addEventListener('click', () => toggleServerFlow('otp'));
-  document.getElementById('ov-flow-password').addEventListener('click', () => toggleServerFlow('password'));
+  // Per-server connection profile (transport / auth / explorer / terminal) is
+  // configured in the Settings dialog (details-edit-btn) — see serverModal.js.
 
   // Settings modal
   document.getElementById('sett-close').innerHTML = icon('close', 14);
@@ -431,6 +431,12 @@ function initUI() {
   document.getElementById('sett-done').addEventListener('click', saveSettings);
   document.getElementById('sett-otp').addEventListener('click', () => { STATE.authMode = 'otp'; updateSettingsUI(); });
   document.getElementById('sett-password').addEventListener('click', () => { STATE.authMode = 'password'; updateSettingsUI(); });
+  document.getElementById('sett-method-internal').addEventListener('click', () => { STATE.defaultMethod = 'internal'; updateSettingsUI(); });
+  document.getElementById('sett-method-external').addEventListener('click', () => { STATE.defaultMethod = 'external'; updateSettingsUI(); });
+  document.getElementById('sett-explorer-sftp').addEventListener('click', () => { STATE.defaultExplorer = 'sftp'; updateSettingsUI(); });
+  document.getElementById('sett-explorer-onechannel').addEventListener('click', () => { STATE.defaultExplorer = 'onechannel'; updateSettingsUI(); });
+  document.getElementById('sett-term-pty').addEventListener('click', () => { STATE.defaultTerminal = 'pty'; updateSettingsUI(); });
+  document.getElementById('sett-term-console').addEventListener('click', () => { STATE.defaultTerminal = 'console'; updateSettingsUI(); });
   document.getElementById('sett-scope-global').addEventListener('click', () => { STATE.authScope = 'global'; updateSettingsUI(); });
   document.getElementById('sett-scope-standalone').addEventListener('click', () => { STATE.authScope = 'standalone'; updateSettingsUI(); });
 
@@ -500,9 +506,12 @@ async function init() {
   // first render (not only after the Settings modal is opened).
   try {
     const settings = await api('/api/settings');
-    STATE.authMode = settings.auth_mode || 'otp';
-    STATE.authScope = settings.auth_scope || 'global';
-  } catch { /* defaults stay 'otp' / 'global' */ }
+    STATE.authScope       = settings.config_scope || settings.auth_scope || 'global';
+    STATE.authMode        = settings.default_auth_mode || settings.auth_mode || 'otp';
+    STATE.defaultMethod   = settings.default_connection_method || 'internal';
+    STATE.defaultExplorer = settings.default_explorer_mode || 'onechannel';
+    STATE.defaultTerminal = settings.default_terminal_mode || 'console';
+  } catch { /* defaults stay as initialized in STATE */ }
   await _loadServersAndRestore();
 
   // Periodic polling
