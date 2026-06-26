@@ -13,8 +13,41 @@ export function _setServerModalDeps(loadServers, selectServer) {
 
 let _editingServerId = null;
 
+// Dirty-tracking: capture the form state when the dialog opens; "Save Changes"
+// stays disabled until the user actually changes something (Add mode is always
+// enabled — validation guards empty fields). `_smReady` suppresses the dirty
+// check while openServerModalById populates the fields.
+let _smReady = false;
+let _smInitial = '';
+
+function smSnapshot() {
+  const authKey = document.getElementById('sm-auth-key').classList.contains('active');
+  return [
+    document.getElementById('sm-label').value.trim(),
+    document.getElementById('sm-host').value.trim(),
+    document.getElementById('sm-port').value.trim(),
+    document.getElementById('sm-user').value.trim(),
+    authKey ? 'key' : 'password',
+    document.getElementById('sm-key').value.trim(),
+    document.getElementById('sm-pass').value,
+    document.getElementById('sm-method-internal').classList.contains('active') ? 'internal' : 'external',
+    document.getElementById('sm-flow-otp').classList.contains('active') ? 'otp' : 'password',
+    document.getElementById('sm-explorer-sftp').classList.contains('active') ? 'sftp' : 'onechannel',
+    document.getElementById('sm-term-pty').classList.contains('active') ? 'pty' : 'console',
+  ].join('');
+}
+
+// Enable Save only when the form differs from its opened state (edit mode).
+export function smRefreshDirty() {
+  if (!_smReady) return;
+  const btn = document.getElementById('sm-save');
+  if (!btn) return;
+  btn.disabled = _editingServerId ? (smSnapshot() === _smInitial) : false;
+}
+
 export async function openServerModalById(id = null) {
   _editingServerId = id;
+  _smReady = false;
   const overlay   = document.getElementById('server-modal');
   const box       = document.getElementById('server-modal-box');
   const titleText = document.getElementById('sm-title-text');
@@ -22,9 +55,18 @@ export async function openServerModalById(id = null) {
 
   const server = id ? STATE.servers.find(s => s.id === id) : null;
 
-  document.getElementById('sm-title-ico').innerHTML = icon('server', 16);
-  titleText.textContent = server ? 'Edit Server' : 'Add Server';
+  document.getElementById('sm-title-ico').innerHTML = icon(server ? 'settings' : 'server', 16);
+  titleText.textContent = server ? 'Server Settings' : 'Add Server';
   saveBtn.innerHTML = server ? `${icon('save', 13)} Save Changes` : `${icon('plus', 13)} Add Server`;
+  // Clear any stuck disabled/spinner state left by a previous save.
+  saveBtn.disabled = false;
+
+  // Delete lives here too (only for existing servers).
+  const delBtn = document.getElementById('sm-delete');
+  if (delBtn) {
+    delBtn.style.display = server ? '' : 'none';
+    delBtn.innerHTML = `${icon('trash', 13)} Delete server`;
+  }
 
   document.getElementById('sm-label').value = server?.label || '';
   document.getElementById('sm-host').value  = server?.host  || '';
@@ -36,15 +78,24 @@ export async function openServerModalById(id = null) {
   const isKey = !server || server.auth_type !== 'password';
   setServerAuthType(isKey ? 'key' : 'password');
 
-  // Per-server transport: new servers default to Internal (zero-trust proxy).
-  setServerMethod(server?.connection_method === 'external' ? 'external' : 'internal');
   // Per-server auth flow: new servers default to OTP.
   setServerFlow(server?.auth_mode === 'password' ? 'password' : 'otp');
+  // Per-server explorer / terminal: new servers default to the internal-safe modes.
+  setServerExplorer(server?.explorer_mode === 'sftp' ? 'sftp' : 'onechannel');
+  setServerTerminal(server?.terminal_mode === 'pty' ? 'pty' : 'console');
+  // Per-server transport: new servers default to Internal (zero-trust proxy).
+  // Set last so its hint-refresh sees the explorer/terminal selections.
+  setServerMethod(server?.connection_method === 'external' ? 'external' : 'internal');
 
   ['sm-label-err', 'sm-host-err', 'sm-user-err', 'sm-port-err'].forEach(eid => {
     const el = document.getElementById(eid);
     if (el) el.style.display = 'none';
   });
+
+  // Snapshot the populated state, then arm dirty-tracking.
+  _smInitial = smSnapshot();
+  _smReady = true;
+  smRefreshDirty();
 
   overlay.style.display = 'flex';
   setTimeout(() => { box.classList.add('active'); document.getElementById('sm-label').focus(); }, 10);
@@ -64,6 +115,7 @@ export function setServerAuthType(type) {
   document.getElementById('sm-auth-pass').setAttribute('aria-pressed', type === 'password');
   document.getElementById('sm-key-field').style.display  = type === 'key'      ? '' : 'none';
   document.getElementById('sm-pass-field').style.display = type === 'password' ? '' : 'none';
+  smRefreshDirty();
 }
 
 export function setServerFlow(mode) {
@@ -72,6 +124,47 @@ export function setServerFlow(mode) {
   document.getElementById('sm-flow-password').classList.toggle('active', !otp);
   document.getElementById('sm-flow-otp').setAttribute('aria-pressed', otp);
   document.getElementById('sm-flow-password').setAttribute('aria-pressed', !otp);
+  smRefreshDirty();
+}
+
+export function setServerExplorer(mode) {
+  const sftp = mode === 'sftp';
+  document.getElementById('sm-explorer-sftp').classList.toggle('active', sftp);
+  document.getElementById('sm-explorer-onechannel').classList.toggle('active', !sftp);
+  document.getElementById('sm-explorer-sftp').setAttribute('aria-pressed', sftp);
+  document.getElementById('sm-explorer-onechannel').setAttribute('aria-pressed', !sftp);
+  refreshMethodHints();
+}
+
+export function setServerTerminal(mode) {
+  const pty = mode === 'pty';
+  document.getElementById('sm-term-pty').classList.toggle('active', pty);
+  document.getElementById('sm-term-console').classList.toggle('active', !pty);
+  document.getElementById('sm-term-pty').setAttribute('aria-pressed', pty);
+  document.getElementById('sm-term-console').setAttribute('aria-pressed', !pty);
+  refreshMethodHints();
+}
+
+// Allow + warn: every axis stays selectable, but on Internal transport the
+// gateway grants a single channel, so SFTP / live-PTY picks are flagged as
+// "applies on External only" rather than being hidden or disabled.
+function refreshMethodHints() {
+  const internal = document.getElementById('sm-method-internal')?.classList.contains('active');
+  const flowHint = document.getElementById('sm-flow-hint');
+  const expHint  = document.getElementById('sm-explorer-hint');
+  const termHint = document.getElementById('sm-term-hint');
+  if (flowHint) flowHint.textContent = internal
+    ? 'Internal only. Used when config scope is Per-server (see Settings).'
+    : 'External servers authenticate with the stored key/password — flow does not apply.';
+  const sftp = document.getElementById('sm-explorer-sftp')?.classList.contains('active');
+  if (expHint) expHint.innerHTML = internal && sftp
+    ? '⚠ Internal transport has one channel — SFTP falls back to one-channel until you switch to External.'
+    : 'SFTP is faster &amp; binary-safe; one-channel works anywhere a shell does.';
+  const pty = document.getElementById('sm-term-pty')?.classList.contains('active');
+  if (termHint) termHint.innerHTML = internal && pty
+    ? '⚠ Internal transport has one channel — live PTY falls back to the command panel until you switch to External.'
+    : 'Live PTY supports vim/htop/less; command panel runs one command at a time.';
+  smRefreshDirty();
 }
 
 export function setServerMethod(method) {
@@ -80,8 +173,7 @@ export function setServerMethod(method) {
   document.getElementById('sm-method-external').classList.toggle('active', !internal);
   document.getElementById('sm-method-internal').setAttribute('aria-pressed', internal);
   document.getElementById('sm-method-external').setAttribute('aria-pressed', !internal);
-  // The auth-flow choice (OTP vs Password) only applies to internal hosts.
-  document.getElementById('sm-flow-field').style.display = internal ? '' : 'none';
+  refreshMethodHints();
 }
 
 export async function saveServerById() {
@@ -95,6 +187,8 @@ export async function saveServerById() {
   const password = document.getElementById('sm-pass').value;
   const connection_method = document.getElementById('sm-method-internal').classList.contains('active') ? 'internal' : 'external';
   const auth_mode = document.getElementById('sm-flow-otp').classList.contains('active') ? 'otp' : 'password';
+  const explorer_mode = document.getElementById('sm-explorer-sftp').classList.contains('active') ? 'sftp' : 'onechannel';
+  const terminal_mode = document.getElementById('sm-term-pty').classList.contains('active') ? 'pty' : 'console';
 
   let valid = true;
   [['sm-label-err', !label, 'Label is required'],
@@ -107,7 +201,7 @@ export async function saveServerById() {
   if (!valid) return;
 
   const body = {
-    label, host, port, username, auth_mode, connection_method,
+    label, host, port, username, auth_mode, connection_method, explorer_mode, terminal_mode,
     auth_type: authKey ? 'key' : 'password',
     key_path:  authKey ? key_path : '',
     password:  !authKey ? password : '',
@@ -131,6 +225,14 @@ export async function saveServerById() {
     setBtnLoading(saveBtn, false);
     toast('Error: ' + e.message, 'error');
   }
+}
+
+// Delete the server currently open in the Settings dialog, then close it.
+export async function deleteCurrentServer() {
+  const id = _editingServerId;
+  if (!id) return;
+  await deleteServer(id);                                  // confirms + deletes + reloads
+  if (!STATE.servers.find(s => s.id === id)) closeServerModal();  // close only if it was actually removed
 }
 
 export async function deleteServer(id) {

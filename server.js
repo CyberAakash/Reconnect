@@ -345,90 +345,187 @@ class RemoteShell {
     });
   }
 
-  // ── File/info helpers (all over run()) ──
+  // ── File/info helpers — delegate to the runner-agnostic b64* helpers so the
+  //    exact same shell logic backs both the internal RPC shell and the
+  //    external direct-exec path (see b64List/b64ReadFile/... below). ──
+  list(dir)                   { return b64List(this.runner, dir); }
+  readFile(remotePath)        { return b64ReadFile(this.runner, remotePath); }
+  writeFile(remotePath, buf)  { return b64WriteFile(this.runner, remotePath, buf); }
+  deletePath(remotePath)      { return b64DeletePath(this.runner, remotePath); }
 
-  async list(dir) {
-    const d = dir || '.';
-    // GNU find -printf: type<TAB>size<TAB>mtime<TAB>name
-    const { stdout, code } = await this.run(
-      `find ${shq(d)} -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%TY-%Tm-%Td %TH:%TM\\t%f\\n' 2>&1`
-    );
-    if (code !== 0) throw new Error(stdout.trim() || `cannot list ${d}`);
-    const entries = stdout.split('\n').filter(Boolean).map(line => {
-      const [type, size, mtime, ...nameParts] = line.split('\t');
-      const name = nameParts.join('\t');
-      return { name, isDir: type === 'd', size: Number(size) || 0, mtime };
-    }).filter(e => e.name);
-    entries.sort((a, b) => (a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name)));
-    return { path: d, entries };
-  }
+  // Bound `run` so helpers can call it like a plain function.
+  get runner() { return (cmd, opts) => this.run(cmd, opts); }
+}
 
-  async readFile(remotePath) {
-    const sz = await this.run(`stat -c %s -- ${shq(remotePath)} 2>&1`);
-    if (sz.code !== 0) throw new Error(sz.stdout.trim() || `cannot stat ${remotePath}`);
-    const size = Number(sz.stdout.trim());
-    if (Number.isFinite(size) && size > FILE_READ_CAP) {
-      throw new Error(`file too large (${size} bytes; cap ${FILE_READ_CAP})`);
-    }
-    const { stdout, code } = await this.run(`base64 -w0 -- ${shq(remotePath)} 2>&1`, { timeout: 60000 });
-    if (code !== 0) throw new Error(stdout.trim() || `cannot read ${remotePath}`);
-    return Buffer.from(stdout.replace(/\s/g, ''), 'base64');
-  }
+// ════════════════════════════════════════
+//  ONE-CHANNEL (base64-over-shell) FILE OPS
+// ════════════════════════════════════════
+//
+// These back the 'onechannel' explorer mode. A `run(cmd, {timeout}) =>
+// { stdout, code }` runner abstracts *how* the command reaches the host:
+//   • internal transport → the persistent single-shell RPC (RemoteShell.run)
+//   • external transport → a fresh `conn.exec()` per call (execRunner)
+// All paths are POSIX-quoted via shq() — never interpolate raw user paths.
 
-  async writeFile(remotePath, buf) {
-    // Wrap base64 at 1000 chars/line: PTY canonical-mode input caps line length
-    // (~4096 bytes), and `base64 -d` ignores the newlines on the way back in.
-    const b64 = Buffer.from(buf).toString('base64').replace(/(.{1000})/g, '$1\n');
-    const heredoc = `B64_${this.marker}`;
-    // Stream base64 in via a quoted heredoc so arbitrary content can't break out.
-    const cmd = `base64 -d > ${shq(remotePath)} <<'${heredoc}'\n${b64}\n${heredoc}`;
-    const { stdout, code } = await this.run(cmd, { timeout: 60000 });
-    if (code !== 0) throw new Error(stdout.trim() || `cannot write ${remotePath}`);
-  }
+async function b64List(run, dir) {
+  const d = dir || '.';
+  // GNU find -printf: type<TAB>size<TAB>mtime<TAB>name
+  const { stdout, code } = await run(
+    `find ${shq(d)} -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%TY-%Tm-%Td %TH:%TM\\t%f\\n' 2>&1`
+  );
+  if (code !== 0) throw new Error(stdout.trim() || `cannot list ${d}`);
+  const entries = stdout.split('\n').filter(Boolean).map(line => {
+    const [type, size, mtime, ...nameParts] = line.split('\t');
+    const name = nameParts.join('\t');
+    return { name, isDir: type === 'd', size: Number(size) || 0, mtime };
+  }).filter(e => e.name);
+  entries.sort((a, b) => (a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name)));
+  return { path: d, entries };
+}
 
-  async deletePath(remotePath) {
-    const { stdout, code } = await this.run(`rm -rf -- ${shq(remotePath)} 2>&1`);
-    if (code !== 0) throw new Error(stdout.trim() || `cannot delete ${remotePath}`);
+async function b64ReadFile(run, remotePath) {
+  const sz = await run(`stat -c %s -- ${shq(remotePath)} 2>&1`);
+  if (sz.code !== 0) throw new Error(sz.stdout.trim() || `cannot stat ${remotePath}`);
+  const size = Number(sz.stdout.trim());
+  if (Number.isFinite(size) && size > FILE_READ_CAP) {
+    throw new Error(`file too large (${size} bytes; cap ${FILE_READ_CAP})`);
   }
+  const { stdout, code } = await run(`base64 -w0 -- ${shq(remotePath)} 2>&1`, { timeout: 60000 });
+  if (code !== 0) throw new Error(stdout.trim() || `cannot read ${remotePath}`);
+  return Buffer.from(stdout.replace(/\s/g, ''), 'base64');
+}
+
+async function b64WriteFile(run, remotePath, buf) {
+  // Wrap base64 at 1000 chars/line: PTY canonical-mode input caps line length
+  // (~4096 bytes), and `base64 -d` ignores the newlines on the way back in.
+  const b64 = Buffer.from(buf).toString('base64').replace(/(.{1000})/g, '$1\n');
+  const heredoc = `B64_${crypto.randomBytes(8).toString('hex')}`;
+  // Stream base64 in via a quoted heredoc so arbitrary content can't break out.
+  const cmd = `base64 -d > ${shq(remotePath)} <<'${heredoc}'\n${b64}\n${heredoc}`;
+  const { stdout, code } = await run(cmd, { timeout: 60000 });
+  if (code !== 0) throw new Error(stdout.trim() || `cannot write ${remotePath}`);
+}
+
+async function b64DeletePath(run, remotePath) {
+  const { stdout, code } = await run(`rm -rf -- ${shq(remotePath)} 2>&1`);
+  if (code !== 0) throw new Error(stdout.trim() || `cannot delete ${remotePath}`);
+}
+
+// Build a one-shot `run()` over a live (external) SSH connection: each call is
+// its own `exec` channel, so the exit code comes from the channel close event —
+// no sentinel marker needed (unlike the persistent PTY RemoteShell).
+function execRunner(conn) {
+  return (command, { timeout = RPC_DEFAULT_TIMEOUT_MS } = {}) => new Promise((resolve, reject) => {
+    conn.exec(command, (err, stream) => {
+      if (err) return reject(err);
+      let stdout = '';
+      let done = false;
+      const finish = (fn, arg) => { if (done) return; done = true; clearTimeout(timer); fn(arg); };
+      const timer = setTimeout(() => { try { stream.close(); } catch (_) {} finish(reject, new Error('command timed out')); }, timeout);
+      timer.unref && timer.unref();
+      stream.on('data', (d) => {
+        stdout += d.toString('utf8');
+        if (stdout.length > RPC_MAX_OUTPUT) { try { stream.close(); } catch (_) {} finish(reject, new Error('command output exceeded limit')); }
+      });
+      // Commands already redirect 2>&1 where they want stderr; drain anything else.
+      stream.stderr.on('data', (d) => { stdout += d.toString('utf8'); });
+      stream.on('close', (code) => finish(resolve, { stdout, code: typeof code === 'number' ? code : 0 }));
+      stream.on('error', (e) => finish(reject, e));
+    });
+  });
+}
+
+// Probe whether a connection's gateway permits an exec channel. Resolves true if
+// a trivial `printf` exec runs cleanly, false on any error/timeout. Used once at
+// connect time to decide internal transport's op mode (exec vs single shell).
+function probeExec(conn) {
+  // Escape hatch: force the legacy single-shell RPC path (e.g. if a gateway
+  // accepts the probe but misbehaves on later exec channels).
+  if (process.env.RECONNECT_FORCE_SINGLE_SHELL === '1') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (settled) return; settled = true; clearTimeout(t); resolve(v); };
+    const t = setTimeout(() => done(false), 4000);
+    t.unref && t.unref();
+    try {
+      conn.exec('printf RT_OK', (err, stream) => {
+        if (err) return done(false);
+        let out = '';
+        stream.on('data', (d) => { out += d.toString('utf8'); });
+        stream.stderr.on('data', () => {});
+        stream.on('close', () => done(out.includes('RT_OK')));
+        stream.on('error', () => done(false));
+      });
+    } catch (_) { done(false); }
+  });
 }
 
 // ════════════════════════════════════════
 //  SETTINGS
 // ════════════════════════════════════════
 
-// Global auth flow ('password' | 'otp').
-function getAuthMode() {
-  const row = db.prepare(`SELECT value FROM settings WHERE key='auth_mode'`).get();
-  return row ? row.value : 'otp';
+// ── Generic settings access ──
+function getSetting(key, fallback) {
+  const row = db.prepare(`SELECT value FROM settings WHERE key=?`).get(key);
+  return row ? row.value : fallback;
+}
+// Global default for an axis ('connection_method' | 'auth_mode' | 'explorer_mode' | 'terminal_mode').
+function getDefault(axis, fallback) {
+  return getSetting(`default_${axis}`, fallback);
 }
 
-// Flow scope ('global' | 'standalone').
-function getAuthScope() {
-  const row = db.prepare(`SELECT value FROM settings WHERE key='auth_scope'`).get();
-  return row ? row.value : 'global';
+// Configuration scope ('global' = the four global defaults rule every server |
+// 'standalone' = each server uses its own stored axis values). Generalizes the
+// old per-axis `auth_scope`; reads config_scope, falling back to auth_scope.
+function getConfigScope() {
+  return getSetting('config_scope', getSetting('auth_scope', 'global'));
 }
+// Back-compat alias for the auth axis (kept in sync with config_scope on save).
+function getAuthScope() { return getConfigScope(); }
+function getAuthMode()  { return getDefault('auth_mode', getSetting('auth_mode', 'otp')); }
 
-// Effective auth flow for a server: its own when scope is standalone, else global.
-function resolveAuthMode(serverId) {
-  if (getAuthScope() === 'standalone') {
-    const row = db.prepare(`SELECT auth_mode FROM servers WHERE id=?`).get(serverId);
-    if (row && row.auth_mode) return row.auth_mode;
+// Resolve one axis honoring scope: the server's own value under 'standalone',
+// otherwise the global default. `col` is from a fixed internal whitelist.
+function resolveAxis(serverId, col, fallback) {
+  if (getConfigScope() === 'standalone') {
+    const row = db.prepare(`SELECT ${col} FROM servers WHERE id=?`).get(serverId);
+    if (row && row[col]) return row[col];
   }
-  return getAuthMode();
+  return getDefault(col, fallback);
 }
 
 // Transport ('internal' = via zero-trust proxy + single-shell RPC; 'external' = direct SSH).
 function getConnectionMethod(serverId) {
-  const row = db.prepare(`SELECT connection_method FROM servers WHERE id=?`).get(serverId);
-  return row && row.connection_method === 'external' ? 'external' : 'internal';
+  return resolveAxis(serverId, 'connection_method', 'internal') === 'external' ? 'external' : 'internal';
 }
 function isInternal(serverId) {
   return getConnectionMethod(serverId) === 'internal';
 }
 
+// Effective auth flow for a server.
+function resolveAuthMode(serverId) {
+  return resolveAxis(serverId, 'auth_mode', 'otp') === 'password' ? 'password' : 'otp';
+}
+
 // OTP is only honored for internal (gateway) hosts; external hosts always use password/key.
 function usesOtp(serverId) {
   return isInternal(serverId) && resolveAuthMode(serverId) === 'otp';
+}
+
+// Effective explorer/terminal modes. The only hard feasibility downgrade left
+// is the EXPLORER on internal transport: the zero-trust gateway blocks the SFTP
+// subsystem (the ZAC doc requires `scp -O`), so SFTP falls back to one-channel
+// (base64-over-exec). A live PTY *does* work over the gateway (a plain `ssh` is
+// a full interactive shell), so the terminal axis is no longer downgraded.
+// Returns { mode, requested, downgraded }.
+function effectiveExplorerMode(serverId) {
+  const requested = resolveAxis(serverId, 'explorer_mode', 'onechannel') === 'sftp' ? 'sftp' : 'onechannel';
+  const downgraded = isInternal(serverId) && requested === 'sftp';
+  return { mode: downgraded ? 'onechannel' : requested, requested, downgraded };
+}
+function effectiveTerminalMode(serverId) {
+  const mode = resolveAxis(serverId, 'terminal_mode', 'console') === 'pty' ? 'pty' : 'console';
+  return { mode, requested: mode, downgraded: false };
 }
 
 function dropAllSessions() {
@@ -439,27 +536,54 @@ function dropAllSessions() {
   sessions.clear();
 }
 
+// Allowed values per settings key, used by both the GET shape and PUT validation.
+const SETTING_ENUMS = {
+  config_scope:              ['global', 'standalone'],
+  default_connection_method: ['internal', 'external'],
+  default_auth_mode:         ['password', 'otp'],
+  default_explorer_mode:     ['sftp', 'onechannel'],
+  default_terminal_mode:     ['pty', 'console'],
+};
+
+function settingsShape() {
+  return {
+    config_scope:              getConfigScope(),
+    default_connection_method: getDefault('connection_method', 'internal'),
+    default_auth_mode:         getDefault('auth_mode', 'otp'),
+    default_explorer_mode:     getDefault('explorer_mode', 'onechannel'),
+    default_terminal_mode:     getDefault('terminal_mode', 'console'),
+    // Legacy aliases (kept so older clients keep working).
+    auth_mode:  getAuthMode(),
+    auth_scope: getConfigScope(),
+  };
+}
+
 app.get('/api/settings', (req, res) => {
-  res.json({ auth_mode: getAuthMode(), auth_scope: getAuthScope() });
+  res.json(settingsShape());
 });
 
 app.put('/api/settings', (req, res) => {
-  const { auth_mode, auth_scope } = req.body;
-  if (auth_mode !== undefined && !['password', 'otp'].includes(auth_mode)) {
-    return res.status(400).json({ error: 'Invalid auth_mode' });
+  const body = { ...req.body };
+  // Accept legacy aliases by mapping them onto the canonical keys.
+  if (body.auth_scope !== undefined && body.config_scope === undefined) body.config_scope = body.auth_scope;
+  if (body.auth_mode  !== undefined && body.default_auth_mode === undefined) body.default_auth_mode = body.auth_mode;
+
+  // Validate every provided key against its enum before writing anything.
+  for (const [key, allowed] of Object.entries(SETTING_ENUMS)) {
+    if (body[key] !== undefined && !allowed.includes(body[key])) {
+      return res.status(400).json({ error: `Invalid ${key}` });
+    }
   }
-  if (auth_scope !== undefined && !['global', 'standalone'].includes(auth_scope)) {
-    return res.status(400).json({ error: 'Invalid auth_scope' });
-  }
-  if (auth_mode !== undefined) {
-    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('auth_mode', ?)`).run(auth_mode);
-  }
-  if (auth_scope !== undefined) {
-    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('auth_scope', ?)`).run(auth_scope);
-  }
-  // Drop all pooled sessions so each server re-auths under the new effective mode
+
+  const write = (key, val) => { if (val !== undefined) db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`).run(key, val); };
+  for (const key of Object.keys(SETTING_ENUMS)) write(key, body[key]);
+  // Keep the legacy keys in sync so getAuthScope()/getAuthMode() back-compat holds.
+  if (body.config_scope !== undefined)      write('auth_scope', body.config_scope);
+  if (body.default_auth_mode !== undefined) write('auth_mode',  body.default_auth_mode);
+
+  // Drop all pooled sessions so each server re-auths under the new effective config.
   dropAllSessions();
-  res.json({ ok: true, auth_mode: getAuthMode(), auth_scope: getAuthScope() });
+  res.json({ ok: true, ...settingsShape() });
 });
 
 // ════════════════════════════════════════
@@ -558,25 +682,42 @@ function getSession(id) {
 
 /**
  * Route-level helper for EXTERNAL (direct) servers — auto-pooled password/key
- * connection. Internal servers never reach here; their callers use acquireRpc()
- * after an explicit Connect (which sets up the proxy tunnel + single shell).
+ * connection. Internal servers never reach here; their callers use
+ * internalRunner() after an explicit Connect (proxy tunnel + exec/single shell).
  */
 async function acquire(id) {
   return ensureSession(id);
 }
 
 /**
- * OTP mode: return the ready RemoteShell RPC channel, or throw NOT_CONNECTED.
+ * Return a `run(cmd, {timeout}) => { stdout, code }` runner for an INTERNAL
+ * server's pooled (proxy-tunneled) connection: clean per-op exec channels when
+ * the gateway allows exec (session.execMode), else the persistent single-shell
+ * RPC. Throws NOT_CONNECTED until the user has connected.
  */
-function acquireRpc(id) {
+function internalRunner(id) {
   const s = sessions.get(id);
-  if (s && s.status === 'ready' && s.rpc) {
+  if (s && s.status === 'ready') {
     resetIdle(id);
-    return s.rpc;
+    if (s.execMode) return execRunner(s.conn);
+    if (s.rpc) return (cmd, opts) => s.rpc.run(cmd, opts);
   }
   const err = new Error('NOT_CONNECTED');
   err.code = 'NOT_CONNECTED';
   throw err;
+}
+
+/**
+ * Return a `run(cmd, {timeout}) => { stdout, code }` runner for the one-channel
+ * (base64-over-shell/exec) file ops, picking the right backing channel for the
+ * server's transport: internalRunner for internal hosts (exec or single-shell),
+ * or a fresh-exec runner over the pooled direct connection for external hosts.
+ * Throws NOT_CONNECTED (internal) / connection errors (external) like its peers.
+ */
+async function acquireB64Runner(id) {
+  if (isInternal(id)) return internalRunner(id);
+  const conn = await acquire(id);
+  return execRunner(conn);
 }
 
 // ════════════════════════════════════════
@@ -584,73 +725,76 @@ function acquireRpc(id) {
 // ════════════════════════════════════════
 
 app.get('/api/servers', (req, res) => {
-  const servers = db.prepare('SELECT id, label, host, port, username, auth_type, key_path, auth_mode, connection_method FROM servers ORDER BY label').all();
-  // Annotate each server with its effective flow so the UI can gate behavior.
-  const scope = getAuthScope();
-  const globalMode = getAuthMode();
+  const servers = db.prepare('SELECT id, label, host, port, username, auth_type, key_path, auth_mode, connection_method, explorer_mode, terminal_mode FROM servers ORDER BY label').all();
+  // Annotate each server with its effective (scope- + feasibility-resolved) axes
+  // so the UI can gate behavior and flag downgrades without re-deriving the rules.
   for (const s of servers) {
     if (!s.auth_mode) s.auth_mode = 'otp';
     if (s.connection_method !== 'external') s.connection_method = 'internal';
-    s.effective_auth_mode = scope === 'standalone' ? s.auth_mode : globalMode;
+    if (!s.explorer_mode) s.explorer_mode = 'onechannel';
+    if (!s.terminal_mode) s.terminal_mode = 'console';
+    const exp = effectiveExplorerMode(s.id);
+    const term = effectiveTerminalMode(s.id);
+    s.effective_connection_method = getConnectionMethod(s.id);
+    s.effective_auth_mode = resolveAuthMode(s.id);
+    s.effective_explorer_mode = exp.mode;
+    s.effective_terminal_mode = term.mode;
+    s.explorer_downgraded = exp.downgraded;
+    s.terminal_downgraded = term.downgraded;
   }
   res.json(servers);
 });
 
-// Normalize the two per-server axes from a request body.
-const normMethod = (v) => (v === 'external' ? 'external' : 'internal');
-const normAuth   = (v) => (v === 'password' ? 'password' : 'otp');
+// Normalize the four per-server axes from a request body.
+const normMethod   = (v) => (v === 'external'   ? 'external'   : 'internal');
+const normAuth     = (v) => (v === 'password'   ? 'password'   : 'otp');
+const normExplorer = (v) => (v === 'sftp'       ? 'sftp'       : 'onechannel');
+const normTerminal = (v) => (v === 'pty'        ? 'pty'        : 'console');
 
 app.post('/api/servers', (req, res) => {
-  const { label, host, port, username, auth_type, password, key_path, auth_mode, connection_method } = req.body;
+  const { label, host, port, username, auth_type, password, key_path, auth_mode, connection_method, explorer_mode, terminal_mode } = req.body;
   const encPass = auth_type === 'password' ? encrypt(password) : '';
-  const mode = normAuth(auth_mode);
-  const method = normMethod(connection_method);
-  const info = db.prepare('INSERT INTO servers (label, host, port, username, auth_type, password, key_path, auth_mode, connection_method) VALUES (?,?,?,?,?,?,?,?,?)').run(label, host, port || 22, username, auth_type || 'password', encPass, key_path || '', mode, method);
+  const info = db.prepare('INSERT INTO servers (label, host, port, username, auth_type, password, key_path, auth_mode, connection_method, explorer_mode, terminal_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    .run(label, host, port || 22, username, auth_type || 'password', encPass, key_path || '', normAuth(auth_mode), normMethod(connection_method), normExplorer(explorer_mode), normTerminal(terminal_mode));
   res.json({ id: info.lastInsertRowid });
 });
 
 app.put('/api/servers/:id', (req, res) => {
-  const { label, host, port, username, auth_type, password, key_path, auth_mode, connection_method } = req.body;
+  const { label, host, port, username, auth_type, password, key_path, auth_mode, connection_method, explorer_mode, terminal_mode } = req.body;
   const mode = normAuth(auth_mode);
   const method = normMethod(connection_method);
+  const exp = normExplorer(explorer_mode);
+  const term = normTerminal(terminal_mode);
   const encPass = auth_type === 'password' && password ? encrypt(password) : undefined;
   if (encPass !== undefined) {
-    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, auth_type=?, password=?, key_path=?, auth_mode=?, connection_method=? WHERE id=?')
-      .run(label, host, port || 22, username, auth_type, encPass, key_path || '', mode, method, req.params.id);
+    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, auth_type=?, password=?, key_path=?, auth_mode=?, connection_method=?, explorer_mode=?, terminal_mode=? WHERE id=?')
+      .run(label, host, port || 22, username, auth_type, encPass, key_path || '', mode, method, exp, term, req.params.id);
   } else {
-    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, auth_type=?, key_path=?, auth_mode=?, connection_method=? WHERE id=?')
-      .run(label, host, port || 22, username, auth_type, key_path || '', mode, method, req.params.id);
+    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, auth_type=?, key_path=?, auth_mode=?, connection_method=?, explorer_mode=?, terminal_mode=? WHERE id=?')
+      .run(label, host, port || 22, username, auth_type, key_path || '', mode, method, exp, term, req.params.id);
   }
   // Drop pooled session so next op re-connects with new creds / flow / transport
   clearSession(+req.params.id);
   res.json({ ok: true });
 });
 
-// Quick per-server auth-flow toggle (overview inline control)
-app.put('/api/servers/:id/auth-mode', (req, res) => {
-  const { auth_mode } = req.body;
-  if (!['password', 'otp'].includes(auth_mode)) {
-    return res.status(400).json({ error: 'Invalid auth_mode' });
-  }
-  const info = db.prepare('UPDATE servers SET auth_mode=? WHERE id=?').run(auth_mode, req.params.id);
-  if (info.changes === 0) return res.status(404).json({ error: 'Server not found' });
-  // Drop pooled session so next op re-connects under the new flow
-  clearSession(+req.params.id);
-  res.json({ ok: true, auth_mode });
-});
-
-// Quick per-server connection-method (transport) toggle (overview inline control)
-app.put('/api/servers/:id/connection-method', (req, res) => {
-  const { connection_method } = req.body;
-  if (!['internal', 'external'].includes(connection_method)) {
-    return res.status(400).json({ error: 'Invalid connection_method' });
-  }
-  const info = db.prepare('UPDATE servers SET connection_method=? WHERE id=?').run(connection_method, req.params.id);
-  if (info.changes === 0) return res.status(404).json({ error: 'Server not found' });
-  // Drop pooled session so next op re-connects over the new transport
-  clearSession(+req.params.id);
-  res.json({ ok: true, connection_method });
-});
+// Quick per-server axis toggles (overview inline controls). One handler per axis,
+// each validating its enum and dropping the pooled session so the next op
+// re-resolves under the new value.
+function axisPatch(col, allowed) {
+  return (req, res) => {
+    const val = req.body[col];
+    if (!allowed.includes(val)) return res.status(400).json({ error: `Invalid ${col}` });
+    const info = db.prepare(`UPDATE servers SET ${col}=? WHERE id=?`).run(val, req.params.id);
+    if (info.changes === 0) return res.status(404).json({ error: 'Server not found' });
+    clearSession(+req.params.id);
+    res.json({ ok: true, [col]: val });
+  };
+}
+app.put('/api/servers/:id/auth-mode',         (req, res) => axisPatch('auth_mode',         ['password', 'otp'])(req, res));
+app.put('/api/servers/:id/connection-method', (req, res) => axisPatch('connection_method', ['internal', 'external'])(req, res));
+app.put('/api/servers/:id/explorer-mode',     (req, res) => axisPatch('explorer_mode',     ['sftp', 'onechannel'])(req, res));
+app.put('/api/servers/:id/terminal-mode',     (req, res) => axisPatch('terminal_mode',     ['pty', 'console'])(req, res));
 
 app.delete('/api/servers/:id', (req, res) => {
   clearSession(+req.params.id);
@@ -704,6 +848,12 @@ app.get('/api/servers/:id/connect', (req, res) => {
   //   usesOtp   → prompt the user for a one-time passcode (internal + otp only)
   const internal = isInternal(id);
   const otp = usesOtp(id);
+
+  // The gateway blocks the SFTP subsystem, so an SFTP explorer choice on an
+  // internal host falls back to one-channel (base64). Surface it up front.
+  if (effectiveExplorerMode(id).downgraded) {
+    sse('notice', { message: 'Internal transport: the gateway blocks SFTP — using one-channel file access (base64).' });
+  }
   const conn = new Client();
   const session = {
     conn,
@@ -711,7 +861,8 @@ app.get('/api/servers/:id/connect', (req, res) => {
     otpFinish: null,
     idleTimer: null,
     connectResolvers: [],
-    rpc: null,
+    rpc: null,       // RemoteShell when in single-shell fallback mode
+    execMode: false, // true once the gateway is confirmed to allow exec channels
   };
   sessions.set(id, session);
 
@@ -734,32 +885,59 @@ app.get('/api/servers/:id/connect', (req, res) => {
   conn.on('ready', () => {
     session.otpFinish = null;
     if (internal) {
-      // The gateway grants only ONE channel and only an interactive shell, so
-      // open that single shell now and drive it as an RPC channel for the whole
-      // session (file ops, sysinfo, command console all flow through it).
-      conn.shell({ term: 'dumb' }, (err, stream) => {
-        if (err) {
-          console.error(`[ssh] shell open failed for server ${id}: ${err.message}`);
-          sse('error', { message: `Shell channel failed: ${err.message}` });
-          clearSession(id);
-          res.end();
-          return;
-        }
-        const marker = 'RT_' + crypto.randomBytes(8).toString('hex');
-        const rpc = new RemoteShell(stream, marker);
-        rpc.init().then(() => {
-          session.rpc = rpc;
-          session.status = 'ready';
-          session.idleTimer = setTimeout(() => clearSession(id), IDLE_TIMEOUT_MS);
-          sse('connected', { serverId: id });
-          res.end();
-        }).catch((e) => {
-          console.error(`[ssh] RemoteShell init failed for server ${id}: ${e.message}`);
-          sse('error', { message: `Session init failed: ${e.message}` });
-          clearSession(id);
-          res.end();
+      // Historically the zero-trust gateway granted only ONE interactive-shell
+      // channel (no exec/sftp), so every op was driven through a single shell
+      // RPC. Newer gateways allow exec channels (only the SFTP subsystem stays
+      // blocked). Probe for exec: if it works, run ops over clean per-op exec
+      // channels (native exit codes, no banner-swallowing); otherwise fall back
+      // to the single-shell RPC exactly as before.
+      const markReady = (msg) => {
+        session.status = 'ready';
+        session.idleTimer = setTimeout(() => clearSession(id), IDLE_TIMEOUT_MS);
+        if (msg) sse('notice', { message: msg });
+        sse('connected', { serverId: id });
+        res.end();
+      };
+      const openRpcShell = () => {
+        conn.shell({ term: 'dumb' }, (err, stream) => {
+          if (err) {
+            console.error(`[ssh] shell open failed for server ${id}: ${err.message}`);
+            sse('error', { message: `Shell channel failed: ${err.message}` });
+            clearSession(id);
+            res.end();
+            return;
+          }
+          const marker = 'RT_' + crypto.randomBytes(8).toString('hex');
+          const rpc = new RemoteShell(stream, marker);
+          rpc.init().then(() => {
+            session.rpc = rpc;
+            markReady(null);
+          }).catch((e) => {
+            console.error(`[ssh] RemoteShell init failed for server ${id}: ${e.message}`);
+            sse('error', { message: `Session init failed: ${e.message}` });
+            clearSession(id);
+            res.end();
+          });
         });
-      });
+      };
+      // OTP mode always uses single-shell RPC; skip exec probe to avoid interference
+      // with keyboard-interactive during auth. Non-OTP modes can probe for exec.
+      if (otp) {
+        console.log(`[ssh] server ${id}: OTP mode — using single-shell RPC`);
+        openRpcShell();
+      } else {
+        probeExec(conn).then((execOk) => {
+          if (sessions.get(id) !== session) return; // disconnected meanwhile
+          if (execOk) {
+            session.execMode = true;
+            console.log(`[ssh] server ${id}: gateway allows exec — using exec mode`);
+            markReady('Connected — gateway allows exec channels (fast mode: clean output, native exit codes).');
+          } else {
+            console.log(`[ssh] server ${id}: exec refused — using single-shell RPC`);
+            openRpcShell();
+          }
+        });
+      }
       return;
     }
     session.status = 'ready';
@@ -894,17 +1072,18 @@ app.get('/api/servers/:id/exec', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
-  // OTP mode: the gateway refuses exec channels — run via the shared shell RPC.
+  // Internal transport: run over the pooled connection — exec channel when the
+  // gateway allows it, else the shared single-shell RPC (internalRunner picks).
   if (isInternal(id)) {
-    let rpc;
-    try { rpc = acquireRpc(id); }
+    let run;
+    try { run = internalRunner(id); }
     catch (err) {
       res.write(`data: ${JSON.stringify({ type: 'error', data: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message })}\n\n`);
       res.end();
       return;
     }
     try {
-      const { stdout, code } = await rpc.run(cmd, { timeout: 120000 });
+      const { stdout, code } = await run(cmd, { timeout: 120000 });
       if (stdout) res.write(`data: ${JSON.stringify({ type: 'stdout', data: stdout })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: 'exit', code })}\n\n`);
     } catch (e) {
@@ -973,11 +1152,11 @@ app.get('/api/servers/:id/sysinfo', async (req, res) => {
   const id = +req.params.id;
 
   if (isInternal(id)) {
-    let rpc;
-    try { rpc = acquireRpc(id); }
+    let run;
+    try { run = internalRunner(id); }
     catch (err) { return res.status(409).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED' : err.message }); }
     try {
-      const { stdout } = await rpc.run(SYSINFO_SCRIPT);
+      const { stdout } = await run(SYSINFO_SCRIPT);
       return res.json(parseSysInfo(stdout));
     } catch (e) { return res.status(500).json({ error: e.message }); }
   }
@@ -1010,17 +1189,18 @@ app.post('/api/servers/:id/upload', upload.single('file'), async (req, res) => {
   const remotePath = req.body.remotePath;
   const localPath = req.file.path;
 
-  // OTP mode: gateway refuses sftp — write via the shared shell (base64).
-  if (isInternal(id)) {
-    let rpc;
-    try { rpc = acquireRpc(id); }
+  // One-channel explorer: write via base64-over-shell (RPC for internal, exec
+  // for external) — no SFTP subsystem needed.
+  if (effectiveExplorerMode(id).mode === 'onechannel') {
+    let run;
+    try { run = await acquireB64Runner(id); }
     catch (err) {
       fs.unlink(localPath, () => {});
       return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message });
     }
     try {
       const buf = fs.readFileSync(localPath);
-      await rpc.writeFile(remotePath, buf);
+      await b64WriteFile(run, remotePath, buf);
       fs.unlink(localPath, () => {});
       return res.json({ ok: true });
     } catch (e) {
@@ -1055,12 +1235,12 @@ app.post('/api/servers/:id/file/read', async (req, res) => {
 
   const remotePath = req.body.path;
 
-  if (isInternal(id)) {
-    let rpc;
-    try { rpc = acquireRpc(id); }
+  if (effectiveExplorerMode(id).mode === 'onechannel') {
+    let run;
+    try { run = await acquireB64Runner(id); }
     catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
     try {
-      const buf = await rpc.readFile(remotePath);
+      const buf = await b64ReadFile(run, remotePath);
       return res.json({ content: buf.toString('utf8') });
     } catch (e) { return res.status(500).json({ error: e.message }); }
   }
@@ -1091,12 +1271,12 @@ app.post('/api/servers/:id/file/write', async (req, res) => {
 
   const { path: remotePath, content } = req.body;
 
-  if (isInternal(id)) {
-    let rpc;
-    try { rpc = acquireRpc(id); }
+  if (effectiveExplorerMode(id).mode === 'onechannel') {
+    let run;
+    try { run = await acquireB64Runner(id); }
     catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
     try {
-      await rpc.writeFile(remotePath, Buffer.from(content ?? '', 'utf8'));
+      await b64WriteFile(run, remotePath, Buffer.from(content ?? '', 'utf8'));
       return res.json({ ok: true });
     } catch (e) { return res.status(500).json({ error: e.message }); }
   }
@@ -1125,12 +1305,12 @@ app.post('/api/servers/:id/file/list', async (req, res) => {
 
   const dirPath = req.body.path;
 
-  if (isInternal(id)) {
-    let rpc;
-    try { rpc = acquireRpc(id); }
+  if (effectiveExplorerMode(id).mode === 'onechannel') {
+    let run;
+    try { run = await acquireB64Runner(id); }
     catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
     try {
-      const result = await rpc.list(dirPath);
+      const result = await b64List(run, dirPath);
       return res.json(result);
     } catch (e) { return res.status(500).json({ error: e.message }); }
   }
@@ -1170,12 +1350,12 @@ app.post('/api/servers/:id/file/delete', async (req, res) => {
 
   const filePath = req.body.path;
 
-  if (isInternal(id)) {
-    let rpc;
-    try { rpc = acquireRpc(id); }
+  if (effectiveExplorerMode(id).mode === 'onechannel') {
+    let run;
+    try { run = await acquireB64Runner(id); }
     catch (err) { return res.status(503).json({ error: err.code === 'NOT_CONNECTED' ? 'NOT_CONNECTED: click Connect first' : err.message }); }
     try {
-      await rpc.deletePath(filePath);
+      await b64DeletePath(run, filePath);
       return res.json({ ok: true });
     } catch (e) { return res.status(500).json({ error: e.message }); }
   }
@@ -1331,21 +1511,36 @@ wss.on('connection', async (ws, req) => {
   if (!match) { ws.close(1008, 'Invalid path'); return; }
   const id = +match[1];
 
-  // OTP mode: the single allowed channel is owned by the RPC shell, so a live
-  // PTY isn't available — the UI uses the command console instead.
-  if (isInternal(id)) {
-    ws.send(JSON.stringify({ type: 'error', message: 'Live terminal is unavailable over the zero-trust gateway. Use the command console.' }));
+  // A live PTY is only served when the effective terminal mode is 'pty'.
+  if (effectiveTerminalMode(id).mode !== 'pty') {
+    ws.send(JSON.stringify({ type: 'error', message: 'This server is set to command-panel mode. Switch its Terminal to Live PTY to use an interactive shell.' }));
     ws.close();
     return;
   }
 
+  // Internal hosts open the PTY shell channel on the EXISTING proxy-tunneled,
+  // already-authenticated session (a plain interactive shell works over the
+  // gateway). External hosts auto-pool a direct connection. Reusing the pooled
+  // internal conn is essential — acquire()/ensureSession would open a NEW direct
+  // connection that bypasses the zero-trust proxy.
   let conn;
-  try {
-    conn = await acquire(id);
-  } catch (err) {
-    ws.send(JSON.stringify({ type: 'error', message: err.message }));
-    ws.close();
-    return;
+  if (isInternal(id)) {
+    const s = sessions.get(id);
+    if (!s || s.status !== 'ready') {
+      ws.send(JSON.stringify({ type: 'error', message: 'NOT_CONNECTED: click Connect first' }));
+      ws.close();
+      return;
+    }
+    resetIdle(id);
+    conn = s.conn;
+  } else {
+    try {
+      conn = await acquire(id);
+    } catch (err) {
+      ws.send(JSON.stringify({ type: 'error', message: err.message }));
+      ws.close();
+      return;
+    }
   }
 
   // Default PTY size — client will send a resize frame immediately

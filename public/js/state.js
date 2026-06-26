@@ -9,8 +9,11 @@ export const STATE = {
   outputs: {},       // id -> array of output entries
   savedCommands: [],
   savedFiles: [],
-  authMode: 'otp',      // global connection flow (used when authScope === 'global')
-  authScope: 'global',  // 'global' (one switch rules all) | 'standalone' (per-server flow)
+  authMode: 'otp',      // global default auth flow (used when scope === 'global')
+  authScope: 'global',  // config scope: 'global' (defaults rule all) | 'standalone' (per-server)
+  defaultMethod: 'internal',     // global default transport
+  defaultExplorer: 'onechannel', // global default explorer
+  defaultTerminal: 'console',    // global default terminal
   sidebarCollapsed: localStorage.getItem('rt-sidebar-collapsed') === '1',
   mobileNavOpen: false,
   sseConnections: {},   // id -> EventSource
@@ -54,5 +57,21 @@ export function effectiveAuthMode(id) {
  */
 export function isInternal(id) {
   const s = STATE.servers.find(sv => sv.id === id);
-  return !s || s.connection_method !== 'external';
+  return !s || (s.effective_connection_method || s.connection_method) !== 'external';
+}
+
+/**
+ * Effective explorer mode ('sftp' | 'onechannel') for a server — the server
+ * annotates each list entry with `effective_explorer_mode` (scope- and
+ * feasibility-resolved). Falls back to the global default.
+ */
+export function effectiveExplorerMode(id) {
+  const s = STATE.servers.find(sv => sv.id === id);
+  return (s && s.effective_explorer_mode) || STATE.defaultExplorer;
+}
+
+/** Effective terminal mode ('pty' | 'console') for a server. */
+export function effectiveTerminalMode(id) {
+  const s = STATE.servers.find(sv => sv.id === id);
+  return (s && s.effective_terminal_mode) || STATE.defaultTerminal;
 }
