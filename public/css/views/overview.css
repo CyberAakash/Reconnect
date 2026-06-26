@@ -15,11 +15,22 @@
 /* =================== BENTO OVERVIEW =================== */
 .rt-bento-wrap { width: 100%; margin: 0; padding: 20px 24px 56px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box; }
 
-.rt-bento-toolbar { display: flex; align-items: center; gap: 8px; padding-bottom: 2px; }
+/* Wrap so the per-server axis segments + action buttons reflow onto a second
+   row on narrower viewports instead of overflowing the toolbar. */
+.rt-bento-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; row-gap: 8px; padding-bottom: 2px; }
 .rt-bento-toolbar-title {
   font-size: 17px; font-weight: 700; letter-spacing: -.02em;
   color: var(--rt-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* Read-only connection-profile chips beside the server name. The interactive
+   toggles live in the Settings dialog; these just show the active profile. */
+.rt-server-axes { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.rt-axis-chip {
+  font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap;
+  padding: 4px 8px; border-radius: 999px;
+  color: var(--rt-fg-muted); background: var(--rt-input); border: 1px solid var(--rt-border-2);
+}
+.rt-axis-chip--down { color: #fff; background: #f59e0b; border-color: #f59e0b; }
 
 .rt-bento {
   display: grid;

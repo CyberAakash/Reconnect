@@ -42,6 +42,10 @@ export function connectServer(id) {
     let data; try { data = JSON.parse(e.data); } catch { data = {}; }
     handleConnectEvent(id, { type: 'prompt', prompt: data.prompt || 'Enter one-time passcode:' }, sse);
   });
+  sse.addEventListener('notice', e => {
+    let data; try { data = JSON.parse(e.data); } catch { data = {}; }
+    handleConnectEvent(id, { type: 'notice', message: data.message || '' }, sse);
+  });
   sse.addEventListener('error', e => {
     if (!e.data) return;
     let data; try { data = JSON.parse(e.data); } catch { data = {}; }
@@ -106,6 +110,13 @@ function handleConnectEvent(id, data, sse) {
     }
     case 'prompt':
       _deps.openOtpModal?.(id, data.prompt || 'Enter one-time passcode:');
+      break;
+    case 'notice':
+      if (data.message) {
+        appendOutput(id, { type: 'info', text: data.message, ts: Date.now() });
+        if (STATE.selectedId === id) loadOutputForServer(id);
+        toast(data.message);
+      }
       break;
     case 'data':
     case 'stdout':
