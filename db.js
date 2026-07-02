@@ -66,6 +66,24 @@ if (!serverCols.some(c => c.name === 'connection_method')) {
 db.prepare(`UPDATE servers SET auth_mode='password' WHERE auth_mode='legacy'`).run();
 db.prepare(`UPDATE settings SET value='password' WHERE key='auth_mode' AND value='legacy'`).run();
 
+// ── Migration: merge auth_type + auth_mode into one 3-way axis ───────────
+// auth_type (key|password, "which credential") and auth_mode (otp|password,
+// "which handshake") never varied independently: OTP already ignored
+// auth_type entirely, and auth_mode='password' never changed the credential.
+// Collapse both into auth_mode: key | password | otp. A row's OTP flag only
+// carries over if it was actually honored (internal transport); otherwise the
+// merged value falls back to the credential it was already using.
+if (serverCols.some(c => c.name === 'auth_type')) {
+  db.exec(`
+    UPDATE servers
+    SET auth_mode = CASE
+      WHEN auth_mode = 'otp' AND connection_method = 'internal' THEN 'otp'
+      ELSE auth_type
+    END
+  `);
+  db.exec(`ALTER TABLE servers DROP COLUMN auth_type`);
+}
+
 // ── Migration: per-server explorer + terminal axes ────────────────────────
 // Explorer and terminal used to be implied by connection_method. They are now
 // first-class per-server axes, freely chosen on external transport:
@@ -96,6 +114,9 @@ db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('auth_scope', 'g
 // 'global'. `config_scope` generalizes the old `auth_scope` (which only ruled
 // the auth axis) to govern all four axes; it is seeded from auth_scope so an
 // upgrade preserves the user's existing global/standalone choice.
+// default_auth_mode is key | password | otp (see the auth_type/auth_mode
+// merge migration above) — a 'key' default still resolves each server's own
+// stored key_path, since credentials themselves stay per-server.
 const _authScope = db.prepare(`SELECT value FROM settings WHERE key='auth_scope'`).get();
 const _authDef   = db.prepare(`SELECT value FROM settings WHERE key='auth_mode'`).get();
 db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('config_scope', ?)`).run(_authScope?.value || 'global');

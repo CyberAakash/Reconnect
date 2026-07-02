@@ -49,6 +49,15 @@ function setSeg(activeId, otherId, isActive) {
   document.getElementById(otherId).setAttribute('aria-pressed', !isActive);
 }
 
+// Reflect a three-button mutually-exclusive segmented control's active/aria state.
+function setSeg3(ids, activeId) {
+  ids.forEach(id => {
+    const isActive = id === activeId;
+    document.getElementById(id).classList.toggle('active', isActive);
+    document.getElementById(id).setAttribute('aria-pressed', isActive);
+  });
+}
+
 export function updateSettingsUI() {
   const standalone = STATE.authScope === 'standalone';
 
@@ -57,7 +66,8 @@ export function updateSettingsUI() {
 
   // Global default toggles
   setSeg('sett-method-internal', 'sett-method-external', STATE.defaultMethod !== 'external');
-  setSeg('sett-otp', 'sett-password', STATE.authMode === 'otp');
+  const authBtnId = STATE.authMode === 'key' ? 'sett-auth-key' : STATE.authMode === 'otp' ? 'sett-otp' : 'sett-password';
+  setSeg3(['sett-auth-key', 'sett-password', 'sett-otp'], authBtnId);
   setSeg('sett-explorer-sftp', 'sett-explorer-onechannel', STATE.defaultExplorer === 'sftp');
   setSeg('sett-term-pty', 'sett-term-console', STATE.defaultTerminal === 'pty');
 

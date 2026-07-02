@@ -20,18 +20,22 @@ let _editingServerId = null;
 let _smReady = false;
 let _smInitial = '';
 
+function smAuthMode() {
+  if (document.getElementById('sm-auth-key').classList.contains('active')) return 'key';
+  if (document.getElementById('sm-auth-otp').classList.contains('active')) return 'otp';
+  return 'password';
+}
+
 function smSnapshot() {
-  const authKey = document.getElementById('sm-auth-key').classList.contains('active');
   return [
     document.getElementById('sm-label').value.trim(),
     document.getElementById('sm-host').value.trim(),
     document.getElementById('sm-port').value.trim(),
     document.getElementById('sm-user').value.trim(),
-    authKey ? 'key' : 'password',
+    smAuthMode(),
     document.getElementById('sm-key').value.trim(),
     document.getElementById('sm-pass').value,
     document.getElementById('sm-method-internal').classList.contains('active') ? 'internal' : 'external',
-    document.getElementById('sm-flow-otp').classList.contains('active') ? 'otp' : 'password',
     document.getElementById('sm-explorer-sftp').classList.contains('active') ? 'sftp' : 'onechannel',
     document.getElementById('sm-term-pty').classList.contains('active') ? 'pty' : 'console',
   ].join('');
@@ -75,11 +79,8 @@ export async function openServerModalById(id = null) {
   document.getElementById('sm-key').value   = server?.key_path || '';
   document.getElementById('sm-pass').value  = '';
 
-  const isKey = !server || server.auth_type !== 'password';
-  setServerAuthType(isKey ? 'key' : 'password');
-
-  // Per-server auth flow: new servers default to OTP.
-  setServerFlow(server?.auth_mode === 'password' ? 'password' : 'otp');
+  // Per-server auth: new servers default to OTP.
+  setServerAuthMode(['key', 'password', 'otp'].includes(server?.auth_mode) ? server.auth_mode : 'otp');
   // Per-server explorer / terminal: new servers default to the internal-safe modes.
   setServerExplorer(server?.explorer_mode === 'sftp' ? 'sftp' : 'onechannel');
   setServerTerminal(server?.terminal_mode === 'pty' ? 'pty' : 'console');
@@ -108,22 +109,16 @@ export function closeServerModal() {
   overlay.style.display = 'none';
 }
 
-export function setServerAuthType(type) {
-  document.getElementById('sm-auth-key').classList.toggle('active', type === 'key');
-  document.getElementById('sm-auth-pass').classList.toggle('active', type === 'password');
-  document.getElementById('sm-auth-key').setAttribute('aria-pressed', type === 'key');
-  document.getElementById('sm-auth-pass').setAttribute('aria-pressed', type === 'password');
-  document.getElementById('sm-key-field').style.display  = type === 'key'      ? '' : 'none';
-  document.getElementById('sm-pass-field').style.display = type === 'password' ? '' : 'none';
-  smRefreshDirty();
-}
-
-export function setServerFlow(mode) {
-  const otp = mode === 'otp';
-  document.getElementById('sm-flow-otp').classList.toggle('active', otp);
-  document.getElementById('sm-flow-password').classList.toggle('active', !otp);
-  document.getElementById('sm-flow-otp').setAttribute('aria-pressed', otp);
-  document.getElementById('sm-flow-password').setAttribute('aria-pressed', !otp);
+export function setServerAuthMode(mode) {
+  const isKey = mode === 'key', isPass = mode === 'password', isOtp = mode === 'otp';
+  document.getElementById('sm-auth-key').classList.toggle('active', isKey);
+  document.getElementById('sm-auth-pass').classList.toggle('active', isPass);
+  document.getElementById('sm-auth-otp').classList.toggle('active', isOtp);
+  document.getElementById('sm-auth-key').setAttribute('aria-pressed', isKey);
+  document.getElementById('sm-auth-pass').setAttribute('aria-pressed', isPass);
+  document.getElementById('sm-auth-otp').setAttribute('aria-pressed', isOtp);
+  document.getElementById('sm-key-field').style.display  = isKey  ? '' : 'none';
+  document.getElementById('sm-pass-field').style.display = isPass ? '' : 'none';
   smRefreshDirty();
 }
 
@@ -154,9 +149,16 @@ function refreshMethodHints() {
   const flowHint = document.getElementById('sm-flow-hint');
   const expHint  = document.getElementById('sm-explorer-hint');
   const termHint = document.getElementById('sm-term-hint');
+  // OTP only applies over the zero-trust proxy (internal transport); disable
+  // it on External and fall back to Password if it was the active selection.
+  const otpBtn = document.getElementById('sm-auth-otp');
+  if (otpBtn) {
+    otpBtn.disabled = !internal;
+    if (!internal && otpBtn.classList.contains('active')) setServerAuthMode('password');
+  }
   if (flowHint) flowHint.textContent = internal
-    ? 'Internal only. Used when config scope is Per-server (see Settings).'
-    : 'External servers authenticate with the stored key/password — flow does not apply.';
+    ? 'OTP is internal-only. Used when config scope is Per-server (see Settings).'
+    : 'External servers authenticate with the stored key/password — OTP is unavailable.';
   const sftp = document.getElementById('sm-explorer-sftp')?.classList.contains('active');
   if (expHint) expHint.innerHTML = internal && sftp
     ? '⚠ The zero-trust gateway blocks SFTP — Internal hosts fall back to one-channel (base64). Use External for SFTP.'
@@ -180,11 +182,10 @@ export async function saveServerById() {
   const host     = document.getElementById('sm-host').value.trim();
   const port     = parseInt(document.getElementById('sm-port').value, 10) || 22;
   const username = document.getElementById('sm-user').value.trim();
-  const authKey  = document.getElementById('sm-auth-key').classList.contains('active');
+  const auth_mode = smAuthMode();
   const key_path = document.getElementById('sm-key').value.trim();
   const password = document.getElementById('sm-pass').value;
   const connection_method = document.getElementById('sm-method-internal').classList.contains('active') ? 'internal' : 'external';
-  const auth_mode = document.getElementById('sm-flow-otp').classList.contains('active') ? 'otp' : 'password';
   const explorer_mode = document.getElementById('sm-explorer-sftp').classList.contains('active') ? 'sftp' : 'onechannel';
   const terminal_mode = document.getElementById('sm-term-pty').classList.contains('active') ? 'pty' : 'console';
 
@@ -200,9 +201,8 @@ export async function saveServerById() {
 
   const body = {
     label, host, port, username, auth_mode, connection_method, explorer_mode, terminal_mode,
-    auth_type: authKey ? 'key' : 'password',
-    key_path:  authKey ? key_path : '',
-    password:  !authKey ? password : '',
+    key_path: auth_mode === 'key' ? key_path : '',
+    password: auth_mode === 'password' ? password : '',
   };
 
   setBtnLoading(saveBtn, true);
