@@ -142,10 +142,11 @@ app.post('/api/logout', (req, res) => {
 app.use('/api', requireAuth);
 
 // ── SSH config builder ──
-// `otp` controls only the auth handshake (independent of transport): when true,
-// ssh2 is driven straight to keyboard-interactive so the user can type a passcode.
-// Transport (config.sock for the proxy tunnel) is set by the caller.
-function sshConfig(server, { otp } = {}) {
+// `mode` is the resolved auth axis (key | password | otp), independent of
+// transport: 'otp' drives ssh2 straight to keyboard-interactive so the user
+// can type a passcode. Transport (config.sock for the proxy tunnel) is set
+// by the caller.
+function sshConfig(server, { mode } = {}) {
   const config = {
     host: server.host,
     port: server.port,
@@ -155,7 +156,7 @@ function sshConfig(server, { otp } = {}) {
     keepaliveInterval: 15000,
     keepaliveCountMax: 8,
   };
-  if (otp) {
+  if (mode === 'otp') {
     // OTP flow: authenticate via a single one-time passcode over
     // keyboard-interactive. Force ssh2 straight to it — no agent/publickey/
     // password attempts to muddy the negotiation (the agent has no identities,
@@ -165,7 +166,7 @@ function sshConfig(server, { otp } = {}) {
     config.authHandler = ['keyboard-interactive'];
     // Give the user time to receive the OTP email and type it (default is 20s).
     config.readyTimeout = 120000;
-  } else if (server.auth_type === 'key') {
+  } else if (mode === 'key') {
     config.privateKey = fs.readFileSync(server.key_path, 'utf8');
   } else {
     config.password = decrypt(server.password);
@@ -502,14 +503,25 @@ function isInternal(serverId) {
   return getConnectionMethod(serverId) === 'internal';
 }
 
-// Effective auth flow for a server.
+// Requested auth axis for a server: key | password | otp — which credential
+// is stored, or whether to prompt for an OTP passcode instead of using one.
 function resolveAuthMode(serverId) {
-  return resolveAxis(serverId, 'auth_mode', 'otp') === 'password' ? 'password' : 'otp';
+  const v = resolveAxis(serverId, 'auth_mode', 'otp');
+  return ['key', 'password', 'otp'].includes(v) ? v : 'otp';
 }
 
-// OTP is only honored for internal (gateway) hosts; external hosts always use password/key.
+// Effective auth mode: OTP is only honored for internal (gateway) hosts —
+// external hosts always authenticate with the stored key/password, so a
+// requested 'otp' downgrades to 'password' there (mirrors
+// effectiveExplorerMode/effectiveTerminalMode's requested/downgraded shape).
+function effectiveAuthMode(serverId) {
+  const requested = resolveAuthMode(serverId);
+  const downgraded = requested === 'otp' && !isInternal(serverId);
+  return { mode: downgraded ? 'password' : requested, requested, downgraded };
+}
+
 function usesOtp(serverId) {
-  return isInternal(serverId) && resolveAuthMode(serverId) === 'otp';
+  return effectiveAuthMode(serverId).mode === 'otp';
 }
 
 // Effective explorer/terminal modes. The only hard feasibility downgrade left
@@ -540,7 +552,7 @@ function dropAllSessions() {
 const SETTING_ENUMS = {
   config_scope:              ['global', 'standalone'],
   default_connection_method: ['internal', 'external'],
-  default_auth_mode:         ['password', 'otp'],
+  default_auth_mode:         ['key', 'password', 'otp'],
   default_explorer_mode:     ['sftp', 'onechannel'],
   default_terminal_mode:     ['pty', 'console'],
 };
@@ -662,7 +674,7 @@ function ensureSession(id) {
       if (sessions.get(id) === session) sessions.delete(id);
     });
 
-    conn.connect(sshConfig(server, { otp: false }));
+    conn.connect(sshConfig(server, { mode: effectiveAuthMode(id).mode }));
   });
 }
 
@@ -725,53 +737,56 @@ async function acquireB64Runner(id) {
 // ════════════════════════════════════════
 
 app.get('/api/servers', (req, res) => {
-  const servers = db.prepare('SELECT id, label, host, port, username, auth_type, key_path, auth_mode, connection_method, explorer_mode, terminal_mode FROM servers ORDER BY label').all();
+  const servers = db.prepare('SELECT id, label, host, port, username, key_path, auth_mode, connection_method, explorer_mode, terminal_mode FROM servers ORDER BY label').all();
   // Annotate each server with its effective (scope- + feasibility-resolved) axes
   // so the UI can gate behavior and flag downgrades without re-deriving the rules.
   for (const s of servers) {
-    if (!s.auth_mode) s.auth_mode = 'otp';
+    if (!['key', 'password', 'otp'].includes(s.auth_mode)) s.auth_mode = 'otp';
     if (s.connection_method !== 'external') s.connection_method = 'internal';
     if (!s.explorer_mode) s.explorer_mode = 'onechannel';
     if (!s.terminal_mode) s.terminal_mode = 'console';
     const exp = effectiveExplorerMode(s.id);
     const term = effectiveTerminalMode(s.id);
+    const auth = effectiveAuthMode(s.id);
     s.effective_connection_method = getConnectionMethod(s.id);
-    s.effective_auth_mode = resolveAuthMode(s.id);
+    s.effective_auth_mode = auth.mode;
     s.effective_explorer_mode = exp.mode;
     s.effective_terminal_mode = term.mode;
     s.explorer_downgraded = exp.downgraded;
     s.terminal_downgraded = term.downgraded;
+    s.auth_mode_downgraded = auth.downgraded;
   }
   res.json(servers);
 });
 
 // Normalize the four per-server axes from a request body.
 const normMethod   = (v) => (v === 'external'   ? 'external'   : 'internal');
-const normAuth     = (v) => (v === 'password'   ? 'password'   : 'otp');
+const normAuth     = (v) => (['key', 'password', 'otp'].includes(v) ? v : 'otp');
 const normExplorer = (v) => (v === 'sftp'       ? 'sftp'       : 'onechannel');
 const normTerminal = (v) => (v === 'pty'        ? 'pty'        : 'console');
 
 app.post('/api/servers', (req, res) => {
-  const { label, host, port, username, auth_type, password, key_path, auth_mode, connection_method, explorer_mode, terminal_mode } = req.body;
-  const encPass = auth_type === 'password' ? encrypt(password) : '';
-  const info = db.prepare('INSERT INTO servers (label, host, port, username, auth_type, password, key_path, auth_mode, connection_method, explorer_mode, terminal_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-    .run(label, host, port || 22, username, auth_type || 'password', encPass, key_path || '', normAuth(auth_mode), normMethod(connection_method), normExplorer(explorer_mode), normTerminal(terminal_mode));
+  const { label, host, port, username, password, key_path, auth_mode, connection_method, explorer_mode, terminal_mode } = req.body;
+  const mode = normAuth(auth_mode);
+  const encPass = mode === 'password' ? encrypt(password) : '';
+  const info = db.prepare('INSERT INTO servers (label, host, port, username, password, key_path, auth_mode, connection_method, explorer_mode, terminal_mode) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(label, host, port || 22, username, encPass, key_path || '', mode, normMethod(connection_method), normExplorer(explorer_mode), normTerminal(terminal_mode));
   res.json({ id: info.lastInsertRowid });
 });
 
 app.put('/api/servers/:id', (req, res) => {
-  const { label, host, port, username, auth_type, password, key_path, auth_mode, connection_method, explorer_mode, terminal_mode } = req.body;
+  const { label, host, port, username, password, key_path, auth_mode, connection_method, explorer_mode, terminal_mode } = req.body;
   const mode = normAuth(auth_mode);
   const method = normMethod(connection_method);
   const exp = normExplorer(explorer_mode);
   const term = normTerminal(terminal_mode);
-  const encPass = auth_type === 'password' && password ? encrypt(password) : undefined;
+  const encPass = mode === 'password' && password ? encrypt(password) : undefined;
   if (encPass !== undefined) {
-    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, auth_type=?, password=?, key_path=?, auth_mode=?, connection_method=?, explorer_mode=?, terminal_mode=? WHERE id=?')
-      .run(label, host, port || 22, username, auth_type, encPass, key_path || '', mode, method, exp, term, req.params.id);
+    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, password=?, key_path=?, auth_mode=?, connection_method=?, explorer_mode=?, terminal_mode=? WHERE id=?')
+      .run(label, host, port || 22, username, encPass, key_path || '', mode, method, exp, term, req.params.id);
   } else {
-    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, auth_type=?, key_path=?, auth_mode=?, connection_method=?, explorer_mode=?, terminal_mode=? WHERE id=?')
-      .run(label, host, port || 22, username, auth_type, key_path || '', mode, method, exp, term, req.params.id);
+    db.prepare('UPDATE servers SET label=?, host=?, port=?, username=?, key_path=?, auth_mode=?, connection_method=?, explorer_mode=?, terminal_mode=? WHERE id=?')
+      .run(label, host, port || 22, username, key_path || '', mode, method, exp, term, req.params.id);
   }
   // Drop pooled session so next op re-connects with new creds / flow / transport
   clearSession(+req.params.id);
@@ -791,7 +806,7 @@ function axisPatch(col, allowed) {
     res.json({ ok: true, [col]: val });
   };
 }
-app.put('/api/servers/:id/auth-mode',         (req, res) => axisPatch('auth_mode',         ['password', 'otp'])(req, res));
+app.put('/api/servers/:id/auth-mode',         (req, res) => axisPatch('auth_mode',         ['key', 'password', 'otp'])(req, res));
 app.put('/api/servers/:id/connection-method', (req, res) => axisPatch('connection_method', ['internal', 'external'])(req, res));
 app.put('/api/servers/:id/explorer-mode',     (req, res) => axisPatch('explorer_mode',     ['sftp', 'onechannel'])(req, res));
 app.put('/api/servers/:id/terminal-mode',     (req, res) => axisPatch('terminal_mode',     ['pty', 'console'])(req, res));
@@ -844,10 +859,12 @@ app.get('/api/servers/:id/connect', (req, res) => {
   }
 
   // Two independent decisions:
-  //   internal  → tunnel through the zero-trust proxy + single-shell RPC
-  //   usesOtp   → prompt the user for a one-time passcode (internal + otp only)
+  //   internal → tunnel through the zero-trust proxy + single-shell RPC
+  //   mode     → the resolved auth axis (key | password | otp); otp only
+  //              applies on internal transport (see effectiveAuthMode)
   const internal = isInternal(id);
-  const otp = usesOtp(id);
+  const mode = effectiveAuthMode(id).mode;
+  const otp = mode === 'otp';
 
   // The gateway blocks the SFTP subsystem, so an SFTP explorer choice on an
   // internal host falls back to one-channel (base64). Surface it up front.
@@ -874,7 +891,7 @@ app.get('/api/servers/:id/connect', (req, res) => {
       const promptText = prompts[0].prompt || 'OTP:';
       sse('prompt', { prompt: promptText });
     });
-  } else if (server.auth_type !== 'key') {
+  } else if (mode !== 'key') {
     // internal+password or external+password: finish keyboard-interactive
     // silently with the stored password (no prompt).
     conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
@@ -957,7 +974,7 @@ app.get('/api/servers/:id/connect', (req, res) => {
     if (sessions.get(id) === session) sessions.delete(id);
   });
 
-  const config = sshConfig(server, { otp });
+  const config = sshConfig(server, { mode });
   if (internal) {
     // Tunnel through the zero-trust proxy — the gateway is only reachable via it.
     connectViaProxy(server.host, server.port || 22)
