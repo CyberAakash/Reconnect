@@ -23,7 +23,7 @@ import { renderFilesTab, loadFileTree, renderEditorTabs, saveActiveFile, compile
 import { loadQuickCommands, toggleQuickDrawer, addQuickCommand, closeQcModal, saveQuickCommand, _setQuickCommandsDeps } from './features/quickCommands.js';
 
 // Modals
-import { openServerModalById, closeServerModal, setServerAuthType, setServerFlow, setServerMethod, setServerExplorer, setServerTerminal, saveServerById, deleteCurrentServer, smRefreshDirty, _setServerModalDeps } from './modals/serverModal.js';
+import { openServerModalById, closeServerModal, setServerAuthMode, setServerMethod, setServerExplorer, setServerTerminal, saveServerById, deleteCurrentServer, smRefreshDirty, _setServerModalDeps } from './modals/serverModal.js';
 import { openSettings, closeSettings, updateSettingsUI, saveSettings, _setSettingsModalDeps } from './modals/settingsModal.js';
 import { openHelp, closeHelp } from './modals/helpModal.js';
 import { openOtpModal, closeOtpModal, _setOtpDeps } from './modals/otpModal.js';
@@ -410,12 +410,11 @@ function initUI() {
   // Enable "Save Changes" only once a field actually changes.
   ['sm-label', 'sm-host', 'sm-port', 'sm-user', 'sm-key', 'sm-pass'].forEach(id =>
     document.getElementById(id).addEventListener('input', smRefreshDirty));
-  document.getElementById('sm-auth-key').addEventListener('click', () => setServerAuthType('key'));
-  document.getElementById('sm-auth-pass').addEventListener('click', () => setServerAuthType('password'));
+  document.getElementById('sm-auth-key').addEventListener('click', () => setServerAuthMode('key'));
+  document.getElementById('sm-auth-pass').addEventListener('click', () => setServerAuthMode('password'));
+  document.getElementById('sm-auth-otp').addEventListener('click', () => setServerAuthMode('otp'));
   document.getElementById('sm-method-internal').addEventListener('click', () => setServerMethod('internal'));
   document.getElementById('sm-method-external').addEventListener('click', () => setServerMethod('external'));
-  document.getElementById('sm-flow-otp').addEventListener('click', () => setServerFlow('otp'));
-  document.getElementById('sm-flow-password').addEventListener('click', () => setServerFlow('password'));
   document.getElementById('sm-explorer-sftp').addEventListener('click', () => setServerExplorer('sftp'));
   document.getElementById('sm-explorer-onechannel').addEventListener('click', () => setServerExplorer('onechannel'));
   document.getElementById('sm-term-pty').addEventListener('click', () => setServerTerminal('pty'));
@@ -429,8 +428,9 @@ function initUI() {
   document.getElementById('sett-close').addEventListener('click', closeSettings);
   document.getElementById('help-close').addEventListener('click', closeHelp);
   document.getElementById('sett-done').addEventListener('click', saveSettings);
-  document.getElementById('sett-otp').addEventListener('click', () => { STATE.authMode = 'otp'; updateSettingsUI(); });
+  document.getElementById('sett-auth-key').addEventListener('click', () => { STATE.authMode = 'key'; updateSettingsUI(); });
   document.getElementById('sett-password').addEventListener('click', () => { STATE.authMode = 'password'; updateSettingsUI(); });
+  document.getElementById('sett-otp').addEventListener('click', () => { STATE.authMode = 'otp'; updateSettingsUI(); });
   document.getElementById('sett-method-internal').addEventListener('click', () => { STATE.defaultMethod = 'internal'; updateSettingsUI(); });
   document.getElementById('sett-method-external').addEventListener('click', () => { STATE.defaultMethod = 'external'; updateSettingsUI(); });
   document.getElementById('sett-explorer-sftp').addEventListener('click', () => { STATE.defaultExplorer = 'sftp'; updateSettingsUI(); });

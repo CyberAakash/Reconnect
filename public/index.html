@@ -311,11 +311,21 @@
         <span class="rt-hint" id="sm-user-err" style="color:var(--rt-danger);display:none"></span>
       </div>
       <div class="rt-field">
+        <span class="rt-label">Connection method</span>
+        <div class="rt-seg" role="group" aria-label="Connection method">
+          <button type="button" id="sm-method-internal" class="active" aria-pressed="true">Internal</button>
+          <button type="button" id="sm-method-external" aria-pressed="false">External</button>
+        </div>
+        <span class="rt-hint">Internal tunnels through the zero-trust proxy. External connects directly.</span>
+      </div>
+      <div class="rt-field" id="sm-flow-field">
         <span class="rt-label">Authentication</span>
-        <div class="rt-seg" role="group" aria-label="Authentication method">
+        <div class="rt-seg" role="group" aria-label="Authentication">
           <button type="button" id="sm-auth-key" class="active" aria-pressed="true">SSH Key</button>
           <button type="button" id="sm-auth-pass" aria-pressed="false">Password</button>
+          <button type="button" id="sm-auth-otp" aria-pressed="false">OTP (2-factor)</button>
         </div>
+        <span class="rt-hint" id="sm-flow-hint">OTP is internal-only. Used when config scope is Per-server (see Settings).</span>
       </div>
       <div class="rt-field" id="sm-key-field">
         <label class="rt-label" for="sm-key">Private key path</label>
@@ -326,22 +336,6 @@
         <label class="rt-label" for="sm-pass">Password</label>
         <input id="sm-pass" class="rt-input-el" type="password" placeholder="••••••••••" />
         <span class="rt-hint">Stored encrypted locally.</span>
-      </div>
-      <div class="rt-field">
-        <span class="rt-label">Connection method</span>
-        <div class="rt-seg" role="group" aria-label="Connection method">
-          <button type="button" id="sm-method-internal" class="active" aria-pressed="true">Internal</button>
-          <button type="button" id="sm-method-external" aria-pressed="false">External</button>
-        </div>
-        <span class="rt-hint">Internal tunnels through the zero-trust proxy. External connects directly.</span>
-      </div>
-      <div class="rt-field" id="sm-flow-field">
-        <span class="rt-label">Authentication flow</span>
-        <div class="rt-seg" role="group" aria-label="Authentication flow">
-          <button type="button" id="sm-flow-otp" class="active" aria-pressed="true">OTP (2-factor)</button>
-          <button type="button" id="sm-flow-password" aria-pressed="false">Password</button>
-        </div>
-        <span class="rt-hint" id="sm-flow-hint">Internal only. Used when config scope is Per-server (see Settings).</span>
       </div>
       <div class="rt-field" id="sm-explorer-field">
         <span class="rt-label">File explorer</span>
@@ -393,11 +387,12 @@
           </div>
         </div>
         <div class="rt-field" id="sett-global-flow">
-          <span class="rt-label">Default authentication flow</span>
-          <span class="rt-hint" style="margin-bottom:4px">Applies to internal servers (external uses key/password).</span>
-          <div class="rt-seg" role="group" aria-label="Default authentication flow">
-            <button type="button" id="sett-otp" aria-pressed="false">OTP (2-factor)</button>
+          <span class="rt-label">Default authentication</span>
+          <span class="rt-hint" style="margin-bottom:4px">OTP applies to internal servers only. Key uses each server's own stored key path.</span>
+          <div class="rt-seg" role="group" aria-label="Default authentication">
+            <button type="button" id="sett-auth-key" aria-pressed="false">SSH Key</button>
             <button type="button" id="sett-password" class="active" aria-pressed="true">Password</button>
+            <button type="button" id="sett-otp" aria-pressed="false">OTP (2-factor)</button>
           </div>
         </div>
         <div class="rt-field" id="sett-def-explorer-field">
