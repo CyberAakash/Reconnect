@@ -19,8 +19,12 @@ export function updateInlineControls(server) {
   const internal = (server.effective_connection_method || server.connection_method) !== 'external';
   const chips = [];
   chips.push({ text: internal ? 'Internal' : 'External' });
-  // Auth flow only matters for internal hosts.
-  if (internal) chips.push({ text: (server.effective_auth_mode || server.auth_mode) === 'password' ? 'Password' : 'OTP' });
+  const authMode = server.effective_auth_mode || server.auth_mode;
+  chips.push({
+    text: authMode === 'key' ? 'SSH Key' : authMode === 'otp' ? 'OTP' : 'Password',
+    down: !!server.auth_mode_downgraded,
+    title: server.auth_mode_downgraded ? 'OTP unavailable on External transport — using stored key/password' : '',
+  });
   chips.push({
     text: server.explorer_mode === 'sftp' ? 'SFTP' : 'One-channel',
     down: !!server.explorer_downgraded,
@@ -66,9 +70,10 @@ export function renderOverview(server) {
 
   const status = STATE.serverStatus[server.id] || 'disconnected';
   const isConnected = status === 'connected';
-  const authDisplay = server.auth_type === 'key'
+  const authMode = server.effective_auth_mode || server.auth_mode;
+  const authDisplay = authMode === 'key'
     ? `SSH Key (${server.key_path || 'default'})`
-    : (server.auth_type === 'otp' ? 'Password + OTP' : 'Password');
+    : (authMode === 'otp' ? 'Password + OTP' : 'Password');
 
   const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
 

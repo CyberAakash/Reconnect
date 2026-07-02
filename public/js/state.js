@@ -9,7 +9,7 @@ export const STATE = {
   outputs: {},       // id -> array of output entries
   savedCommands: [],
   savedFiles: [],
-  authMode: 'otp',      // global default auth flow (used when scope === 'global')
+  authMode: 'otp',      // global default auth mode: key | password | otp (used when scope === 'global')
   authScope: 'global',  // config scope: 'global' (defaults rule all) | 'standalone' (per-server)
   defaultMethod: 'internal',     // global default transport
   defaultExplorer: 'onechannel', // global default explorer
@@ -41,9 +41,9 @@ export const STATE = {
 };
 
 /**
- * Effective auth flow ('otp' | 'password') for a given server.
+ * Effective auth mode ('key' | 'password' | 'otp') for a given server.
  * The server annotates each list entry with `effective_auth_mode` (resolved
- * from scope + per-server flow); fall back to the global flow if absent.
+ * from scope + per-server flow); fall back to the global default if absent.
  */
 export function effectiveAuthMode(id) {
   const s = STATE.servers.find(sv => sv.id === id);
