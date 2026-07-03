@@ -1,0 +1,17 @@
+# Force keyboard-interactive (PAM) as the only auth method. This makes sshd send
+# a prompt that REConnect's OTP flow (authHandler: ['keyboard-interactive'])
+# relays to the UI; the answer is validated by pam_unix against the password.
+Port 22
+PermitRootLogin no
+
+PasswordAuthentication no
+PubkeyAuthentication no
+KbdInteractiveAuthentication yes
+ChallengeResponseAuthentication yes
+UsePAM yes
+
+# Allow many forwarded shells; the OTP/internal mode in REConnect deliberately
+# uses a single shell channel, so this just keeps parity with a real gateway.
+Subsystem sftp /usr/lib/openssh/sftp-server
+AcceptEnv LANG LC_*
+PrintMotd no

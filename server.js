@@ -48,7 +48,11 @@ function decrypt(text) {
   return decrypted;
 }
 
-app.use(express.json());
+// Body size limit for JSON requests (file writes post content inline). Default
+// 25mb covers large source/config files; override via RECONNECT_MAX_BODY_SIZE
+// (Express accepts values like '50mb', '500kb').
+const MAX_BODY_SIZE = process.env.RECONNECT_MAX_BODY_SIZE || '25mb';
+app.use(express.json({ limit: MAX_BODY_SIZE }));
 app.use(cookieParser());
 
 const upload = multer({ dest: path.join(__dirname, 'uploads') });
@@ -1110,6 +1114,41 @@ app.put('/api/files/:id', (req, res) => {
 
 app.delete('/api/files/:id', (req, res) => {
   db.prepare('DELETE FROM saved_files WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ════════════════════════════════════════
+//  NOTES CRUD
+// ════════════════════════════════════════
+// Notes are markdown docs scoped either to a single server (server_id set) or
+// globally (server_id NULL). Ordered newest-edited first for both listings.
+
+app.get('/api/notes', (req, res) => {
+  const notes = db.prepare('SELECT * FROM notes WHERE server_id IS NULL ORDER BY updated_at DESC').all();
+  res.json(notes);
+});
+
+app.get('/api/servers/:id/notes', (req, res) => {
+  const notes = db.prepare('SELECT * FROM notes WHERE server_id=? ORDER BY updated_at DESC').all(+req.params.id);
+  res.json(notes);
+});
+
+app.post('/api/notes', (req, res) => {
+  const { server_id, title, content } = req.body;
+  const info = db.prepare('INSERT INTO notes (server_id, title, content, updated_at) VALUES (?,?,?,?)')
+    .run(server_id || null, title || 'Untitled', content || '', Date.now());
+  res.json({ id: info.lastInsertRowid });
+});
+
+app.put('/api/notes/:id', (req, res) => {
+  const { title, content } = req.body;
+  db.prepare('UPDATE notes SET title=?, content=?, updated_at=? WHERE id=?')
+    .run(title || 'Untitled', content || '', Date.now(), req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/notes/:id', (req, res) => {
+  db.prepare('DELETE FROM notes WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 

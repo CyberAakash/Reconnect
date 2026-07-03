@@ -1,0 +1,187 @@
+/* Notes view — shared by the per-server tab and the global notes overlay. */
+
+/* Deterministic fill: the mount roots are flex containers and .rt-notes-wrap
+ * fills them via flex (not percentage heights, which failed to resolve inside
+ * the modal and let the editor grow per line). .rt-note-holder is the sole
+ * scroller, so the pane stays a fixed height and content scrolls inside it. */
+#global-notes-root { display: flex; flex: 1; min-height: 0; }
+#notes-server-root { display: flex; height: 100%; min-height: 0; }
+/* Global notes overlay: near-full-screen height (not the shared 800px cap). */
+#global-notes-box { height: 92vh; width: min(1200px, 96vw); }
+
+.rt-notes-wrap {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--rt-bg);
+}
+
+/* ── List pane ─────────────────────────────────────────────────────────── */
+.rt-notes-list {
+  width: 240px;
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--rt-border);
+  background: var(--rt-panel);
+  min-height: 0;
+}
+.rt-notes-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--rt-border);
+}
+.rt-notes-list-title { font-size: 13px; font-weight: 600; color: var(--rt-fg); }
+.rt-notes-items { flex: 1; overflow-y: auto; padding: 6px; }
+.rt-notes-empty-list {
+  padding: 20px 14px;
+  font-size: 12.5px;
+  color: var(--rt-fg-muted);
+  text-align: center;
+}
+
+.rt-note-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 11px;
+  border: none;
+  border-radius: var(--rt-radius);
+  background: transparent;
+  color: var(--rt-fg);
+  cursor: pointer;
+  transition: background var(--rt-dur) var(--rt-ease);
+}
+.rt-note-item:hover { background: var(--rt-panel-2); }
+.rt-note-item.active { background: color-mix(in srgb, var(--rt-accent) 18%, transparent); }
+.rt-note-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rt-note-item-time { font-size: 11px; color: var(--rt-fg-muted); }
+
+/* ── Editor pane ───────────────────────────────────────────────────────── */
+.rt-note-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.rt-note-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rt-border);
+}
+.rt-note-title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+}
+.rt-note-status {
+  font-size: 11.5px;
+  color: var(--rt-fg-muted);
+  white-space: nowrap;
+}
+
+.rt-note-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+/* The holder owns the scroll: BlockNote grows with content, so a bounded height
+ * + overflow here is what makes long notes scrollable. */
+.rt-note-holder {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 0 40px;
+}
+.rt-note-empty {
+  flex: 1;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--rt-fg-muted);
+  text-align: center;
+}
+.rt-note-empty p { margin: 0; font-size: 14px; font-weight: 500; }
+.rt-note-empty span { font-size: 12px; }
+.rt-note-editor.empty .rt-note-editor-head { border-bottom: none; }
+
+/* ── BlockNote theme remap ─────────────────────────────────────────────────
+ * BlockNote's built-in palette is neutral gray and clashes with the app's
+ * purple-tinted theme. Remap its --bn-colors-* variables to the app's --rt-*
+ * tokens on the editor root (matches both data-color-scheme values). Because
+ * --rt-* flip with the app's [data-theme], the editor follows the theme toggle
+ * live without a remount. */
+.rt-note-holder .bn-container { background: transparent; font-size: 15px; }
+
+/* ── Editable fills the pane + no focus "box" ──────────────────────────────
+ * The editable (.bn-editor, the ProseMirror contenteditable) is a flex child of
+ * .bn-container. Make it fill the full pane so clicking anywhere places the
+ * cursor; the holder (overflow-y:auto) remains the sole scroller for long notes.
+ * A generous bottom padding keeps the caret off the very bottom edge so the
+ * slash menu usually has room to open below. */
+.rt-note-holder .bn-container,
+.rt-note-holder .bn-root,
+.rt-note-holder [data-color-scheme] { display: flex; flex-direction: column; flex: 1 0 auto; min-height: 100%; }
+.rt-note-holder .bn-editor { flex: 1 0 auto; padding-bottom: 25vh; }
+/* Suppress the app's global :focus-visible accent outline on the editable
+ * (base.css) — it was drawing a growing box around the content. */
+.rt-note-holder .bn-editor:focus,
+.rt-note-holder .bn-editor:focus-visible { outline: none; }
+
+/* Slash menu: keep a usable minimum height when space allows (BlockNote still
+ * caps it via an inline max-height when cramped, degrading to internal scroll). */
+.bn-suggestion-menu { min-height: 180px; }
+
+.rt-note-holder [data-color-scheme] {
+  --bn-colors-editor-text: var(--rt-fg);
+  --bn-colors-editor-background: transparent;
+  --bn-colors-menu-text: var(--rt-fg);
+  --bn-colors-menu-background: var(--rt-panel);
+  --bn-colors-tooltip-text: var(--rt-fg);
+  --bn-colors-tooltip-background: var(--rt-panel-2);
+  --bn-colors-hovered-text: var(--rt-fg);
+  --bn-colors-hovered-background: var(--rt-panel-2);
+  --bn-colors-selected-text: var(--rt-fg);
+  --bn-colors-selected-background: color-mix(in srgb, var(--rt-accent) 28%, transparent);
+  --bn-colors-disabled-text: var(--rt-fg-muted);
+  --bn-colors-disabled-background: var(--rt-panel);
+  --bn-colors-border: var(--rt-border);
+  --bn-colors-side-menu: var(--rt-fg-muted);
+  --bn-colors-shadow: rgba(0, 0, 0, 0.35);
+}
+/* Code block ships a hardcoded #161616 — blend it with the app instead. */
+.rt-note-holder [data-content-type="codeBlock"] {
+  background-color: var(--rt-panel-2) !important;
+  color: var(--rt-fg) !important;
+}
+
+/* ── Global notes overlay body (fills the large modal) ─────────────────── */
+.rt-notes-modal-body {
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Responsive: narrower list pane on small screens ───────────────────── */
+@media (max-width: 768px) {
+  .rt-notes-list { width: 150px; flex-basis: 150px; }
+}
