@@ -1,0 +1,43 @@
+# REConnect local test harness
+# ─────────────────────────────
+# Spins up two SSH targets so every connection flow can be exercised without the
+# corporate zero-trust gateway:
+#
+#   ssh-external  → direct SSH, password auth, SFTP + PTY enabled.
+#                   Use for: External transport, password auth, SFTP explorer,
+#                   live PTY terminal (and external + one-channel/command-panel
+#                   by toggling those axes on the server).
+#
+#   ssh-otp       → sshd that offers ONLY keyboard-interactive (PAM) auth, so the
+#                   REConnect OTP flow prompts and you type the unix password as
+#                   the "code". Reachable in tests via the HTTP CONNECT proxy
+#                   (test/proxy.js) to mimic the internal/zero-trust path.
+#                   Use for: Internal transport + OTP flow.
+#
+# Run:   cd test && docker compose up -d --build
+# Stop:  cd test && docker compose down
+#
+# Credentials (both hosts):  user=tester  password=tester123
+
+services:
+  ssh-external:
+    image: lscr.io/linuxserver/openssh-server:latest
+    container_name: reconnect-ssh-external
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - PASSWORD_ACCESS=true
+      - USER_NAME=tester
+      - USER_PASSWORD=tester123
+      - SUDO_ACCESS=false
+    ports:
+      - "2222:2222"          # host 2222 → container sshd (listens on 2222)
+    restart: unless-stopped
+
+  ssh-otp:
+    build: ./otp-sshd
+    container_name: reconnect-ssh-otp
+    ports:
+      - "2223:22"            # host 2223 → container sshd (listens on 22)
+    restart: unless-stopped

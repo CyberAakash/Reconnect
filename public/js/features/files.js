@@ -289,12 +289,18 @@ export async function renderEditor() {
   codeScroll.style.display  = 'block';
   toolbar.style.display     = 'flex';
   fname.textContent = f.path.split('/').pop();
+  const lang = langFor(f.path);
   if (langPill) {
-    const lang = langFor(f.path);
     langPill.textContent = lang;
     langPill.className = 'rt-status-pill';
   }
-  if (saveBtn) saveBtn.disabled = !f.dirty;
+  // Compile is Java-only: Java files get the Save + Compile split button, every
+  // other file gets a plain Save button (no compile, no dropdown).
+  const isJava    = lang === 'java';
+  const saveGroup = document.getElementById('save-compile-group');
+  if (saveGroup) saveGroup.style.display = isJava ? '' : 'none';
+  if (saveBtn)   saveBtn.style.display   = isJava ? 'none' : '';
+  resetEditorButtons();
   updateBookmarkBtn();
 
   const monaco = await ensureMonaco();
@@ -326,6 +332,8 @@ export async function renderEditor() {
       file.dirty   = true;
       const sb = document.getElementById('save-btn');
       if (sb) sb.disabled = false;
+      const scb = document.getElementById('save-compile-btn');
+      if (scb) scb.disabled = false;
       renderEditorTabs();
     });
   }
@@ -334,34 +342,61 @@ export async function renderEditor() {
   STATE.monaco.focus();
 }
 
-export async function saveActiveFile() {
+// Restore both primary buttons (plain Save + the Save/Compile split) to their
+// resting label and dirty-based disabled state after any save/compile action.
+function resetEditorButtons() {
+  const f     = STATE.openFiles.find(x => x.path === STATE.activeFilePath);
+  const dirty = !!(f && f.dirty);
+  const save  = document.getElementById('save-btn');
+  const sc    = document.getElementById('save-compile-btn');
+  if (save) { setBtnLoading(save, false, `${icon('save', 13)} <span class="rt-btn-txt">Save</span>`); save.disabled = !dirty; }
+  if (sc)   { setBtnLoading(sc, false, `${icon('compile', 13)} <span class="rt-btn-txt">Save + Compile</span>`); sc.disabled = !dirty; }
+}
+
+// Save the active file. `loadingBtn` gets the spinner (defaults to #save-btn).
+// Returns true on success so callers (saveAndCompile) can chain.
+export async function saveActiveFile(loadingBtn) {
   const f = STATE.openFiles.find(f => f.path === STATE.activeFilePath);
-  if (!f) return;
-  const id      = STATE.selectedId;
-  const saveBtn = document.getElementById('save-btn');
-  setBtnLoading(saveBtn, true);
+  if (!f) return false;
+  const id  = STATE.selectedId;
+  const btn = loadingBtn || document.getElementById('save-btn');
+  if (btn) setBtnLoading(btn, true);
   try {
     await api(`/api/servers/${id}/file/write`, { method: 'POST', body: { path: f.path, content: f.content } });
     f.dirty = false;
-    setBtnLoading(saveBtn, false, `${icon('save', 13)} <span class="rt-btn-txt">Save</span>`);
-    saveBtn.disabled = true;
+    resetEditorButtons();
     renderEditorTabs();
     toast(`Saved ${f.path.split('/').pop()}`);
+    return true;
   } catch (e) {
-    setBtnLoading(saveBtn, false, `${icon('save', 13)} <span class="rt-btn-txt">Save</span>`);
+    resetEditorButtons();
     toast('Save failed: ' + e.message, 'error');
+    return false;
   }
 }
 
-export async function compileActiveFile() {
+// Default action of the Java split button: save, then compile only if the save
+// succeeded (no point compiling stale/unsaved content).
+export async function saveAndCompile() {
+  const btn = document.getElementById('save-compile-btn');
+  const ok  = await saveActiveFile(btn);
+  if (ok) await compileActiveFile(btn);
+}
+
+// Compile the active file. `loadingBtn` gets the spinner (defaults to the
+// Save/Compile split button, the only compile trigger in the Java toolbar).
+export async function compileActiveFile(loadingBtn) {
   const f = STATE.openFiles.find(f => f.path === STATE.activeFilePath);
   if (!f) return;
   const id = STATE.selectedId;
   if (STATE.serverStatus[id] !== 'connected') { toast('Must be connected to compile', 'error'); return; }
   const filename = f.path.split('/').pop();
-  const cmd      = `cd source_compile && sh compile.sh ${filename}`;
-  const compBtn  = document.getElementById('compile-btn');
-  setBtnLoading(compBtn, true);
+  // Subshell + absolute path: OTP/internal servers run every command through one
+  // persistent shell, so a bare `cd source_compile` would leak the cwd and make
+  // the next compile fail. `( … )` isolates the cd; `~/` keeps it from compounding.
+  const cmd      = `(cd ~/source_compile && sh compile.sh ${filename})`;
+  const compBtn  = loadingBtn || document.getElementById('save-compile-btn');
+  if (compBtn) setBtnLoading(compBtn, true);
   appendOutput(id, { type: 'cmd', text: cmd, ts: Date.now() });
   if (!STATE.panelOpen) setOutputPanel(true);
   loadOutputForServer(id);
@@ -374,7 +409,7 @@ export async function compileActiveFile() {
       appendOutput(id, { type: data.type, text, ts: Date.now() });
     } else if (data.type === 'exit') {
       appendOutput(id, { type: 'exit', code: data.code ?? 0, ts: Date.now() });
-      setBtnLoading(compBtn, false, `${icon('compile', 13)} <span class="rt-btn-txt">Compile</span>`);
+      resetEditorButtons();
       sse.close();
       if (data.code === 0) toast('Compiled successfully');
       else toast('Compile failed (exit ' + data.code + ')', 'error');
@@ -382,7 +417,7 @@ export async function compileActiveFile() {
     }
   };
   sse.onerror = () => {
-    setBtnLoading(compBtn, false, `${icon('compile', 13)} <span class="rt-btn-txt">Compile</span>`);
+    resetEditorButtons();
     sse.close();
   };
 }
