@@ -32,6 +32,29 @@
 .rt-btn.danger-solid { background: var(--rt-danger); color: #fff; border-color: transparent; }
 .rt-btn.danger-solid:hover { filter: brightness(1.08); }
 
+/* =================== SPLIT BUTTON + MENU =================== */
+/* Primary action button joined to a caret that opens a small dropdown. */
+.rt-split { position: relative; display: inline-flex; }
+.rt-split .rt-split-main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.rt-split .rt-split-toggle {
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  padding: 0 6px; margin-left: 1px;
+}
+.rt-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 50;
+  display: none; flex-direction: column; min-width: 140px; padding: 4px;
+  background: var(--rt-panel-2); border: 1px solid var(--rt-border);
+  border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / .25);
+}
+.rt-menu.open { display: flex; }
+.rt-menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 9px; font-size: 12.5px; color: var(--rt-fg);
+  background: transparent; border: none; border-radius: 6px;
+  cursor: pointer; text-align: left;
+}
+.rt-menu-item:hover { background: var(--rt-panel-3); }
+
 /* Spinner inside button */
 .rt-btn-spinner {
   width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.35);

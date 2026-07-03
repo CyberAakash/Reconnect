@@ -13,13 +13,15 @@ import { renderServerList, loadServers, setSidebarCollapsed, openMobileNav, clos
 import { updateStatusPill } from './ui/statusPill.js';
 import { setTab, _setTabDeps } from './ui/tabs.js';
 import { renderOverview, loadSysInfo, _setOverviewDeps } from './ui/overview.js';
+import { renderServerNotes } from './ui/notes.js';
+import { openGlobalNotes, closeGlobalNotes } from './ui/globalNotes.js';
 import { setOutputPanel, appendOutput, loadOutputForServer, _setOutputPanelDeps } from './ui/outputPanel.js';
 import { initResizeHandle, _setResizeDeps } from './ui/resize.js';
 
 // Features
 import { connectServer, disconnectServer, _setConnectDeps } from './features/connect.js';
 import { teardownTerminal, parkTerminal, unparkTerminal, refitTerminal, refreshTerminal, updateTerminalState, renderTerminalTab, runTerminalCommand, _setTerminalDeps } from './features/terminal.js';
-import { renderFilesTab, loadFileTree, renderEditorTabs, saveActiveFile, compileActiveFile, deleteActiveFile, createNewFile, initFileUpload, toggleBookmarksDrawer, loadSavedFiles, toggleBookmark, toggleFileTree, editorResponsiveResize, _setFilesConnect } from './features/files.js';
+import { renderFilesTab, loadFileTree, renderEditorTabs, saveActiveFile, compileActiveFile, saveAndCompile, deleteActiveFile, createNewFile, initFileUpload, toggleBookmarksDrawer, loadSavedFiles, toggleBookmark, toggleFileTree, editorResponsiveResize, _setFilesConnect } from './features/files.js';
 import { loadQuickCommands, toggleQuickDrawer, addQuickCommand, closeQcModal, saveQuickCommand, _setQuickCommandsDeps } from './features/quickCommands.js';
 
 // Modals
@@ -46,6 +48,7 @@ _setTabDeps({
   renderFilesTab,
   renderOverview,
   loadSysInfo,
+  renderServerNotes,
 });
 
 // outputPanel / resize need: refitTerminal
@@ -228,6 +231,7 @@ function initUI() {
   document.getElementById('rail-logo').innerHTML = icon('logo', 24);
   document.getElementById('rail-sidebar-btn').innerHTML = icon('menu', 16);
   document.getElementById('rail-panel-btn').innerHTML = icon('terminal', 16);
+  document.getElementById('rail-notes-btn').innerHTML = icon('notes', 16);
   document.getElementById('rail-settings-btn').innerHTML = icon('settings', 16);
   document.getElementById('rail-help-btn').innerHTML = icon('info', 16);
   document.getElementById('mb-logo').innerHTML = icon('logo', 20);
@@ -249,6 +253,7 @@ function initUI() {
   document.getElementById('tab-overview').innerHTML = `${icon('server', 13)} Overview`;
   document.getElementById('tab-terminal').innerHTML = `${icon('terminal', 13)} Terminal`;
   document.getElementById('tab-files').innerHTML = `${icon('folder', 13)} Files`;
+  document.getElementById('tab-notes').innerHTML = `${icon('notes', 13)} Notes`;
 
   // Search icon
   document.getElementById('search-ico').innerHTML = icon('search', 14);
@@ -275,6 +280,10 @@ function initUI() {
   document.getElementById('mb-settings-btn').addEventListener('click', openSettings);
   document.getElementById('rail-help-btn').addEventListener('click', openHelp);
   document.getElementById('mb-help-btn').addEventListener('click', openHelp);
+  document.getElementById('rail-notes-btn').addEventListener('click', openGlobalNotes);
+  document.getElementById('gn-title-ico').innerHTML = icon('notes', 17);
+  document.getElementById('gn-close').innerHTML = icon('close', 14);
+  document.getElementById('gn-close').addEventListener('click', closeGlobalNotes);
 
   // Mobile nav
   document.getElementById('mb-nav-btn').addEventListener('click', () => {
@@ -295,6 +304,7 @@ function initUI() {
   document.getElementById('tab-overview').addEventListener('click', () => setTab('overview'));
   document.getElementById('tab-terminal').addEventListener('click', () => setTab('terminal'));
   document.getElementById('tab-files').addEventListener('click', () => setTab('files'));
+  document.getElementById('tab-notes').addEventListener('click', () => setTab('notes'));
 
   // Connect / Disconnect
   document.getElementById('connect-btn').addEventListener('click', () => {
@@ -387,9 +397,28 @@ function initUI() {
   document.getElementById('editor-empty-ico').innerHTML = icon('file', 32);
 
   document.getElementById('save-btn').innerHTML = `${icon('save', 13)} <span class="rt-btn-txt">Save</span>`;
-  document.getElementById('save-btn').addEventListener('click', saveActiveFile);
-  document.getElementById('compile-btn').innerHTML = `${icon('compile', 13)} <span class="rt-btn-txt">Compile</span>`;
-  document.getElementById('compile-btn').addEventListener('click', compileActiveFile);
+  document.getElementById('save-btn').addEventListener('click', () => saveActiveFile());
+
+  // Java split button: primary = Save + Compile; caret opens Save / Compile.
+  const saveCompileBtn = document.getElementById('save-compile-btn');
+  saveCompileBtn.innerHTML = `${icon('compile', 13)} <span class="rt-btn-txt">Save + Compile</span>`;
+  saveCompileBtn.addEventListener('click', saveAndCompile);
+  const saveMenu       = document.getElementById('save-menu');
+  const saveMenuToggle = document.getElementById('save-menu-toggle');
+  saveMenuToggle.innerHTML = icon('chevronDown', 13);
+  const closeSaveMenu = () => { saveMenu.classList.remove('open'); saveMenuToggle.setAttribute('aria-expanded', 'false'); };
+  saveMenuToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = saveMenu.classList.toggle('open');
+    saveMenuToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  document.getElementById('menu-save').innerHTML = `${icon('save', 13)} Save`;
+  document.getElementById('menu-save').addEventListener('click', () => { closeSaveMenu(); saveActiveFile(); });
+  document.getElementById('menu-compile').innerHTML = `${icon('compile', 13)} Compile`;
+  document.getElementById('menu-compile').addEventListener('click', () => { closeSaveMenu(); compileActiveFile(); });
+  document.addEventListener('click', closeSaveMenu);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSaveMenu(); });
+
   document.getElementById('bookmark-file-btn').addEventListener('click', toggleBookmark);
 
   document.getElementById('toggle-bookmarks-btn').innerHTML = icon('bookmark', 13);
@@ -469,8 +498,14 @@ function initUI() {
       }
     });
   });
+  // Global notes closes via its own handler so pending edits are flushed first.
+  document.getElementById('global-notes-modal').addEventListener('click', e => {
+    if (e.target.id === 'global-notes-modal') closeGlobalNotes();
+  });
 
-  // Escape key closes modals
+  // Escape key closes modals. Global notes is intentionally excluded: it holds a
+  // live BlockNote editor that uses Escape for its own menus, so Escape must not
+  // tear down the overlay (close it via the X button or click-outside instead).
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       ['server-modal', 'settings-modal', 'confirm-modal', 'otp-modal', 'qc-modal', 'help-modal'].forEach(modalId => {

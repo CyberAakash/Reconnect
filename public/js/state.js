@@ -38,7 +38,22 @@ export const STATE = {
   sysInfoLoading: {},  // id -> boolean
   monaco: null,        // monaco editor instance (singleton)
   models: new Map(),   // path -> monaco.editor.ITextModel
+
+  // Notes — markdown docs scoped per-server or globally. Keyed by scopeKey
+  // ('global' | numeric server id) so both scopes share one editor component.
+  notes: {},           // scopeKey -> array of note objects
+  notesLoading: {},    // scopeKey -> boolean
+  activeNoteId: {},    // scopeKey -> currently open note id
+  notesDirty: false,   // unsaved-changes flag for the open editor
 };
+
+/**
+ * Canonical scope key for the notes maps: 'global' for global notes, otherwise
+ * the numeric server id. Keeps STATE.notes / activeNoteId lookups consistent.
+ */
+export function noteScopeKey(serverId) {
+  return serverId == null ? 'global' : String(serverId);
+}
 
 /**
  * Effective auth mode ('key' | 'password' | 'otp') for a given server.

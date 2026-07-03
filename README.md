@@ -357,6 +357,7 @@ For always-on operation, wrap with **pm2** or a **systemd** unit.
 | `PORT` | Defaults to `9898` | HTTP port. |
 | `DATA_DIR` | Defaults to app directory | Directory for `data.db` and `.secret`. Use a persistent volume path. |
 | `NODE_ENV` | Set to `production` | Enables prod guards (secure cookies, APP_PASSWORD enforcement). |
+| `RECONNECT_MAX_BODY_SIZE` | Defaults to `25mb` | Max size for editor file saves. Accepts `500kb`, `50mb`, etc. Raise it if you edit very large files. |
 
 ### Persistent data
 

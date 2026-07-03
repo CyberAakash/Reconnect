@@ -7,8 +7,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="https://esm.sh/@wterm/dom@0.3.0/css" />
+  <!-- BlockNote + Mantine styles for the notes editor island (built by Vite). -->
+  <link rel="stylesheet" href="/notes/notes.css" />
+  <!-- style.css loads last so our theme overrides win over vendor CSS
+       (wterm, BlockNote) at equal specificity. -->
+  <link rel="stylesheet" href="style.css" />
   <style>
     html { background: #16142e; }
     html[data-theme='light'] { background: #f3f4f9; }
@@ -31,6 +35,9 @@
     </button>
     <button class="rt-rail-btn" id="rail-theme-btn" aria-label="Switch theme" title="Toggle theme">
       <!-- sun/moon icon injected by JS -->
+    </button>
+    <button class="rt-rail-btn" id="rail-notes-btn" aria-label="Global notes" title="Notes">
+      <!-- notes icon injected by JS -->
     </button>
     <button class="rt-rail-btn" id="rail-settings-btn" aria-label="Settings" title="Settings">
       <!-- settings icon injected by JS -->
@@ -106,6 +113,7 @@
             <button class="rt-ctab active" id="tab-overview" role="tab" aria-selected="true"><!-- server --> <span class="rt-btn-txt">Overview</span></button>
             <button class="rt-ctab" id="tab-terminal" role="tab" aria-selected="false"><!-- terminal --> <span class="rt-btn-txt">Terminal</span></button>
             <button class="rt-ctab" id="tab-files" role="tab" aria-selected="false"><!-- folder --> <span class="rt-btn-txt">Files</span></button>
+            <button class="rt-ctab" id="tab-notes" role="tab" aria-selected="false"><!-- notes --> <span class="rt-btn-txt">Notes</span></button>
           </div>
           <div class="rt-spacer"></div>
           <span class="rt-status-pill disconnected" id="status-pill" role="status" aria-live="polite">
@@ -212,7 +220,14 @@
                     <span class="rt-status-pill disconnected" id="editor-lang" style="font-size:10.5px"></span>
                     <div class="rt-spacer"></div>
                     <button class="rt-icon-btn" id="bookmark-file-btn" title="Bookmark this file"><!-- bookmark --></button>
-                    <button class="rt-btn sm" id="compile-btn"><!-- compile --> <span class="rt-btn-txt">Compile</span></button>
+                    <div class="rt-split" id="save-compile-group" style="display:none">
+                      <button class="rt-btn primary sm rt-split-main" id="save-compile-btn"><!-- compile --> <span class="rt-btn-txt">Save + Compile</span></button>
+                      <button class="rt-btn primary sm rt-split-toggle" id="save-menu-toggle" aria-haspopup="true" aria-expanded="false" title="More actions"><!-- chevronDown --></button>
+                      <div class="rt-menu" id="save-menu" role="menu">
+                        <button class="rt-menu-item" id="menu-save" role="menuitem"><!-- save --> Save</button>
+                        <button class="rt-menu-item" id="menu-compile" role="menuitem"><!-- compile --> Compile</button>
+                      </div>
+                    </div>
                     <button class="rt-btn primary sm" id="save-btn" disabled><!-- save --> <span class="rt-btn-txt">Save</span></button>
                     <button class="rt-btn danger sm" id="delete-file-btn" title="Delete this file"><!-- trash --> <span class="rt-btn-txt">Delete</span></button>
                   </div>
@@ -238,6 +253,11 @@
                   <div class="rt-saved-chips" id="saved-chips"><!-- chips injected by JS --></div>
                 </aside>
               </div>
+            </div>
+
+            <!-- Notes tab (per-server) -->
+            <div id="view-notes" style="display:none; height:100%">
+              <div id="notes-server-root" style="height:100%"></div>
             </div>
 
           </div><!-- /rt-content -->
@@ -516,6 +536,19 @@
     <div class="rt-modal-foot">
       <button class="rt-btn ghost" id="prompt-cancel">Cancel</button>
       <button class="rt-btn primary" id="prompt-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Global notes overlay (opened from the activity rail) -->
+<div class="rt-overlay" id="global-notes-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="gn-title">
+  <div class="rt-modal rt-modal-lg" id="global-notes-box">
+    <div class="rt-modal-head">
+      <h2 id="gn-title"><span id="gn-title-ico"><!-- notes --></span> Global Notes</h2>
+      <button class="rt-icon-btn" id="gn-close" aria-label="Close dialog"><!-- close --></button>
+    </div>
+    <div class="rt-modal-body rt-notes-modal-body">
+      <div id="global-notes-root"></div>
     </div>
   </div>
 </div>

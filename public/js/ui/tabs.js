@@ -9,7 +9,7 @@ export function setTab(tab) {
   _deps.toggleBookmarksDrawer?.(false);
   const prev = STATE.centerTab;
   STATE.centerTab = tab;
-  ['overview', 'terminal', 'files'].forEach(t => {
+  ['overview', 'terminal', 'files', 'notes'].forEach(t => {
     const btn = document.getElementById('tab-' + t);
     const view = document.getElementById('view-' + t);
     if (btn) btn.classList.toggle('active', t === tab);
@@ -21,6 +21,7 @@ export function setTab(tab) {
   if (prev === 'terminal' && tab !== 'terminal') _deps.parkTerminal?.();
   if (tab === 'terminal') { _deps.renderTerminalTab?.(); requestAnimationFrame(() => _deps.unparkTerminal?.()); }
   if (tab === 'files') _deps.renderFilesTab?.();
+  if (tab === 'notes') _deps.renderServerNotes?.(STATE.selectedId);
   if (tab === 'overview') {
     const server = STATE.servers.find(s => s.id === STATE.selectedId);
     if (server) {
