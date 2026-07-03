@@ -14,25 +14,67 @@ export function _setConnectDeps(deps) { Object.assign(_deps, deps); }
 const _otpRetry = {};
 const OTP_MAX_AUTO_RETRY = 3;
 
+// Connect watchdog: if the SSE produces no event within this window the connect
+// is treated as failed, so the UI never wedges on a permanent "Connecting…"
+// spinner (the Connect button is disabled while connecting and the status
+// poller skips 'connecting' servers, so nothing else would recover it). Cleared
+// on the first event from the stream — including 'prompt', which hands off to
+// the OTP modal's own lifecycle (the server allows 120s to enter the passcode).
+const _connectTimers = {};
+const CONNECT_TIMEOUT_MS = 25000;
+
+function clearConnectWatchdog(id) {
+  if (_connectTimers[id]) { clearTimeout(_connectTimers[id]); delete _connectTimers[id]; }
+}
+
+// Abort a connect that never produced an event: close the stream and drop back
+// to 'disconnected' so the Connect button re-enables and the user can retry.
+function failConnect(id, message, sse) {
+  clearConnectWatchdog(id);
+  try { sse?.close(); } catch { /* already closed */ }
+  if (STATE.sseConnections[id] === sse) delete STATE.sseConnections[id];
+  if (STATE.serverStatus[id] !== 'connecting') return;
+  STATE.serverStatus[id] = 'disconnected';
+  appendOutput(id, { type: 'error', text: message, ts: Date.now() });
+  if (STATE.selectedId === id) {
+    _deps.updateStatusPill?.(id);
+    _deps.renderServerList?.();
+    loadOutputForServer(id);
+  }
+  toast(message, 'error');
+}
+
 export function connectServer(id) {
   const server = STATE.servers.find(s => s.id === id);
   if (!server) return;
 
   STATE.serverStatus[id] = 'connecting';
-  _deps.updateStatusPill?.(id);
-  _deps.renderServerList?.();
 
-  appendOutput(id, { type: 'info', text: `Connecting to ${server.label} (${server.username}@${server.host}:${server.port || 22})…`, ts: Date.now() });
-  if (!STATE.panelOpen) setOutputPanel(true);
-  loadOutputForServer(id);
-
+  // Tear down any previous stream/watchdog for this server before starting.
   if (STATE.sseConnections[id]) { STATE.sseConnections[id].close(); delete STATE.sseConnections[id]; }
+  clearConnectWatchdog(id);
 
-  _deps.teardownTerminal?.();
-  STATE._termServerId = null;
+  // UI prep is best-effort: a rendering error here must NOT prevent the
+  // EventSource below from opening, otherwise the spinner wedges forever with
+  // no popup and a disabled Connect button (the reported bug).
+  try {
+    _deps.updateStatusPill?.(id);
+    _deps.renderServerList?.();
+    appendOutput(id, { type: 'info', text: `Connecting to ${server.label} (${server.username}@${server.host}:${server.port || 22})…`, ts: Date.now() });
+    if (!STATE.panelOpen) setOutputPanel(true);
+    loadOutputForServer(id);
+    _deps.teardownTerminal?.();
+    STATE._termServerId = null;
+  } catch (e) {
+    console.error('connect UI prep failed', e);
+  }
 
   const sse = new EventSource(`/api/servers/${id}/connect`);
   STATE.sseConnections[id] = sse;
+
+  _connectTimers[id] = setTimeout(() => {
+    failConnect(id, 'Connection timed out — please try again.', STATE.sseConnections[id]);
+  }, CONNECT_TIMEOUT_MS);
 
   sse.addEventListener('connected', e => {
     let data; try { data = JSON.parse(e.data); } catch { data = {}; }
@@ -52,11 +94,13 @@ export function connectServer(id) {
     handleConnectEvent(id, { type: 'error', message: data.message || 'Connection failed' }, sse);
   });
   sse.onmessage = e => {
+    clearConnectWatchdog(id);
     let data;
     try { data = JSON.parse(e.data); } catch { data = { type: 'info', text: e.data }; }
     if (data.message) appendOutput(id, { type: 'info', text: data.message, ts: Date.now() });
   };
   sse.onerror = () => {
+    clearConnectWatchdog(id);
     if (STATE.serverStatus[id] === 'connecting') {
       STATE.serverStatus[id] = 'disconnected';
       appendOutput(id, { type: 'error', text: 'Connection stream closed unexpectedly', ts: Date.now() });
@@ -71,10 +115,16 @@ export function connectServer(id) {
 }
 
 function handleConnectEvent(id, data, sse) {
+  // Any event means the stream is alive — the watchdog has done its job.
+  clearConnectWatchdog(id);
   switch (data.type) {
     case 'connected':
       STATE.serverStatus[id] = 'connected';
       _otpRetry[id] = 0;
+      // The server ends its response after 'connected'; close our side too so
+      // EventSource does not auto-reconnect and re-trigger /connect.
+      try { sse.close(); } catch { /* already closed */ }
+      if (STATE.sseConnections[id] === sse) delete STATE.sseConnections[id];
       appendOutput(id, { type: 'info', text: `Connected successfully.`, ts: Date.now() });
       if (STATE.selectedId === id) {
         _deps.updateStatusPill?.(id);
@@ -134,6 +184,7 @@ function handleConnectEvent(id, data, sse) {
 export async function disconnectServer(id) {
   const ok = await confirm('Disconnect?', 'This will close the SSH session.', 'Disconnect', false);
   if (!ok) return;
+  clearConnectWatchdog(id);
   try {
     await api(`/api/servers/${id}/disconnect`, { method: 'POST' });
     STATE.serverStatus[id] = 'disconnected';

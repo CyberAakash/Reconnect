@@ -224,8 +224,15 @@ function connectViaProxy(targetHost, targetPort) {
       }
       settled = true;
       cleanup();
+      // Pause before handing off: removing our 'data' listener does NOT re-pause
+      // the socket, so without this any SSH-banner bytes arriving between resolve()
+      // and ssh2 taking over (its own pause + 'data' handler) would be emitted to
+      // no listener and silently dropped — intermittently corrupting the banner
+      // ("Invalid header: expected newline") or truncating it (connect hangs).
+      // Paused, those bytes buffer and ssh2 reads them in order after it resumes.
+      sock.pause();
       // Bytes after the header already belong to the SSH stream (server banner);
-      // push them back so ssh2 reads them.
+      // push them back so ssh2 reads them first.
       const leftover = buf.slice(headerEnd + 4);
       if (leftover.length) sock.unshift(leftover);
       resolve(sock);
@@ -607,14 +614,19 @@ app.put('/api/settings', (req, res) => {
 // ════════════════════════════════════════
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+// Max time from starting the SSH connect to the first sign of auth (an OTP
+// prompt or 'ready'). If the gateway handshake stalls this long, fail fast with
+// a clear error instead of hanging to the 120s ssh2 readyTimeout.
+const CONNECT_ACTIVITY_TIMEOUT_MS = 20 * 1000;
 
-// sessions map: serverId -> { conn, status: 'connecting'|'awaiting_otp'|'ready', otpFinish, idleTimer, connectResolvers }
+// sessions map: serverId -> { conn, status: 'connecting'|'awaiting_otp'|'ready', otpFinish, idleTimer, connectWatchdog, connectResolvers }
 const sessions = new Map();
 
 function clearSession(id) {
   const s = sessions.get(id);
   if (!s) return;
   clearTimeout(s.idleTimer);
+  clearTimeout(s.connectWatchdog);
   try { s.conn.end(); } catch (_) {}
   sessions.delete(id);
 }
@@ -881,6 +893,7 @@ app.get('/api/servers/:id/connect', (req, res) => {
     status: 'connecting',
     otpFinish: null,
     idleTimer: null,
+    connectWatchdog: null, // pre-auth stall timer (cleared once a prompt/ready arrives)
     connectResolvers: [],
     rpc: null,       // RemoteShell when in single-shell fallback mode
     execMode: false, // true once the gateway is confirmed to allow exec channels
@@ -890,6 +903,7 @@ app.get('/api/servers/:id/connect', (req, res) => {
   if (otp) {
     conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
       if (prompts.length === 0) { finish([]); return; }   // info-only round
+      clearTimeout(session.connectWatchdog); // OTP prompt reached — 120s readyTimeout takes over
       session.status = 'awaiting_otp';
       session.otpFinish = finish;
       const promptText = prompts[0].prompt || 'OTP:';
@@ -904,6 +918,7 @@ app.get('/api/servers/:id/connect', (req, res) => {
   }
 
   conn.on('ready', () => {
+    clearTimeout(session.connectWatchdog); // auth negotiation succeeded
     session.otpFinish = null;
     if (internal) {
       // Historically the zero-trust gateway granted only ONE interactive-shell
@@ -969,6 +984,10 @@ app.get('/api/servers/:id/connect', (req, res) => {
 
   conn.on('error', (err) => {
     console.error(`[ssh] connect error for server ${id} (${server.host}) [method=${internal ? 'internal' : 'external'} otp=${otp}]: level=${err.level || 'n/a'} message=${err.message}`);
+    // A superseded connection (a newer connect already replaced this session)
+    // must not delete the current session or push an error onto its client.
+    if (sessions.get(id) !== session) { res.end(); return; }
+    clearTimeout(session.connectWatchdog);
     sse('error', { message: err.message });
     sessions.delete(id);
     res.end();
@@ -978,24 +997,45 @@ app.get('/api/servers/:id/connect', (req, res) => {
     if (sessions.get(id) === session) sessions.delete(id);
   });
 
+  // Fail fast if the handshake stalls before any auth activity (prompt/ready),
+  // rather than hanging to ssh2's 120s readyTimeout. Guarded by session identity
+  // so a superseded connect can't trip a newer session's error.
+  const armConnectWatchdog = () => {
+    session.connectWatchdog = setTimeout(() => {
+      if (sessions.get(id) !== session || session.status !== 'connecting') return;
+      console.error(`[ssh] server ${id} (${server.host}): no auth activity within ${CONNECT_ACTIVITY_TIMEOUT_MS}ms — treating handshake as stalled`);
+      sse('error', { message: 'Connection stalled before authentication — please try again.' });
+      clearSession(id);
+      res.end();
+    }, CONNECT_ACTIVITY_TIMEOUT_MS);
+  };
+
   const config = sshConfig(server, { mode });
   if (internal) {
     // Tunnel through the zero-trust proxy — the gateway is only reachable via it.
     connectViaProxy(server.host, server.port || 22)
-      .then((sock) => { config.sock = sock; conn.connect(config); })
+      .then((sock) => { config.sock = sock; armConnectWatchdog(); conn.connect(config); })
       .catch((err) => {
         console.error(`[ssh] proxy tunnel failed for server ${id} (${server.host}): ${err.message}`);
+        if (sessions.get(id) !== session) { res.end(); return; }
+        clearTimeout(session.connectWatchdog);
         sse('error', { message: `Zero-trust proxy tunnel failed: ${err.message}` });
         sessions.delete(id);
         res.end();
       });
   } else {
+    armConnectWatchdog();
     conn.connect(config);
   }
 
   req.on('close', () => {
-    // If SSE dropped before ready, clean up
-    if (session.status !== 'ready') clearSession(id);
+    // If the SSE dropped before this session was ready, clean up — but ONLY if
+    // this request still owns the session. A superseded request's late close
+    // (e.g. the client closed a prior stream just before opening this one) must
+    // not tear down a newer connect's session, which would kill its in-flight
+    // OTP handshake and swallow the passcode prompt. This is the intermittent
+    // "no OTP popup" race.
+    if (sessions.get(id) === session && session.status !== 'ready') clearSession(id);
   });
 });
 
