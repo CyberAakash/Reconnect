@@ -511,13 +511,35 @@ async function init() {
     STATE.defaultMethod   = settings.default_connection_method || 'internal';
     STATE.defaultExplorer = settings.default_explorer_mode || 'onechannel';
     STATE.defaultTerminal = settings.default_terminal_mode || 'console';
-  } catch { /* defaults stay as initialized in STATE */ }
+  } catch (e) {
+    // Defaults stay as initialized in STATE, but surface the failure — a silent
+    // failure here is what made connection gating only work after opening Settings.
+    console.error('startup settings load failed', e);
+  }
   await _loadServersAndRestore();
 
-  // Periodic polling
+  // Periodic polling. A 'connecting' server is normally left alone (its SSE
+  // drives the transition), but if it stays 'connecting' past a grace window we
+  // poll it anyway so a client stuck on a dead stream recovers to the server's
+  // real status instead of wedging on the spinner. The grace window avoids
+  // racing a just-started connect before the server has registered the session
+  // or sent the OTP prompt.
+  const CONNECTING_POLL_GRACE_MS = 10000;
+  const _connectingSince = {};
   setInterval(() => {
-    if (STATE.selectedId && STATE.serverStatus[STATE.selectedId] !== 'connecting') {
-      pollStatus(STATE.selectedId);
+    const now = Date.now();
+    for (const key of Object.keys(STATE.serverStatus)) {
+      if (STATE.serverStatus[key] === 'connecting') {
+        if (!_connectingSince[key]) _connectingSince[key] = now;
+      } else if (_connectingSince[key]) {
+        delete _connectingSince[key];
+      }
+    }
+    if (STATE.selectedId) {
+      const st = STATE.serverStatus[STATE.selectedId];
+      const stuck = st === 'connecting' &&
+        (now - (_connectingSince[STATE.selectedId] || now)) > CONNECTING_POLL_GRACE_MS;
+      if (st !== 'connecting' || stuck) pollStatus(STATE.selectedId);
     }
     STATE.servers.forEach(s => {
       if (STATE.serverStatus[s.id] === 'connected') pollStatus(s.id);
