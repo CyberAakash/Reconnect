@@ -55,6 +55,17 @@
 }
 .rt-menu-item:hover { background: var(--rt-panel-3); }
 
+/* Save/Compile dropdown matches primary split button look and width. */
+#save-menu {
+  width: 100%;
+  min-width: 100%;
+  background: var(--rt-accent);
+  border-color: transparent;
+  box-shadow: 0 6px 20px rgb(var(--rt-accent-rgb) / .35);
+}
+#save-menu .rt-menu-item { color: #fff; }
+#save-menu .rt-menu-item:hover { background: rgb(255 255 255 / .14); }
+
 /* Spinner inside button */
 .rt-btn-spinner {
   width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.35);
