@@ -7,7 +7,7 @@
  ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═══╝╚══════╝ ╚═════╝  ╚═╝
 
  Browser-based SSH Remote Server Manager
- Developed by Aakash — MTS @ ZohoIM
+ Developed by @ZohoIM
 ```
 
 A lightweight, self-hosted web app to manage remote servers over SSH — all from your browser. No native SSH client needed. Designed for developers who want to replace repetitive terminal workflows with single-click operations.
